@@ -167,11 +167,52 @@ run_s3() {
 
     local key="cli-test-object.txt"
     local body="hello-s3-cli"
-    out=$(echo "$body" | aws_cmd s3api put-object --bucket "$bucket" --key "$key" --body /dev/stdin 2>&1) && rc=0 || rc=1
+    local body_file
+    body_file=$(mktemp)
+    printf '%s' "$body" > "$body_file"
+    out=$(aws_cmd s3api put-object \
+        --bucket "$bucket" \
+        --key "$key" \
+        --metadata owner=team-a,env=dev \
+        --storage-class STANDARD_IA \
+        --body "$body_file" 2>&1) && rc=0 || rc=1
     check "S3 PutObject" "$( [ $rc -eq 0 ] && echo true || echo false )" "$out"
 
-    out=$(aws_cmd s3api get-object --bucket "$bucket" --key "$key" /dev/stdout 2>&1) && rc=0 || rc=1
-    check "S3 GetObject" "$( [ $rc -eq 0 ] && echo true || echo false )" "$out"
+    local get_tmp
+    get_tmp=$(mktemp)
+    out=$(aws_cmd s3api get-object --bucket "$bucket" --key "$key" "$get_tmp" 2>&1) && rc=0 || rc=1
+    local downloaded get_owner get_storage get_checksum
+    downloaded=$(cat "$get_tmp" 2>/dev/null || echo "")
+    get_owner=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('Metadata',{}).get('owner',''))" 2>/dev/null || echo "")
+    get_storage=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('StorageClass',''))" 2>/dev/null || echo "")
+    get_checksum=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ChecksumSHA256',''))" 2>/dev/null || echo "")
+    check "S3 GetObject" "$( [ $rc -eq 0 ] && [ "$downloaded" = "$body" ] && echo true || echo false )" "$out"
+    check "S3 GetObject metadata header parity" "$( [ "$get_owner" = "team-a" ] && echo true || echo false )" "$out"
+    check "S3 GetObject storage class header parity" "$( [ "$get_storage" = "STANDARD_IA" ] && echo true || echo false )" "$out"
+    check "S3 GetObject checksum header parity" "$( [ -n "$get_checksum" ] && echo true || echo false )" "$out"
+    rm -f "$get_tmp"
+
+    out=$(aws_cmd s3api head-object --bucket "$bucket" --key "$key" 2>&1) && rc=0 || rc=1
+    local head_owner head_storage head_checksum head_len
+    head_owner=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('Metadata',{}).get('owner',''))" 2>/dev/null || echo "")
+    head_storage=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('StorageClass',''))" 2>/dev/null || echo "")
+    head_checksum=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ChecksumSHA256',''))" 2>/dev/null || echo "")
+    head_len=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ContentLength',0))" 2>/dev/null || echo 0)
+    check "S3 HeadObject" "$( [ $rc -eq 0 ] && [ "$head_len" = "${#body}" ] && echo true || echo false )" "$out"
+    check "S3 HeadObject metadata parity" "$( [ $rc -eq 0 ] && [ "$head_owner" = "$get_owner" ] && echo true || echo false )" "$out"
+    check "S3 HeadObject storage class parity" "$( [ $rc -eq 0 ] && [ "$head_storage" = "$get_storage" ] && echo true || echo false )" "$out"
+    check "S3 HeadObject checksum parity" "$( [ $rc -eq 0 ] && [ "$head_checksum" = "$get_checksum" ] && echo true || echo false )" "$out"
+
+    out=$(aws_cmd s3api get-object-attributes \
+        --bucket "$bucket" \
+        --key "$key" \
+        --object-attributes ETag ObjectSize StorageClass Checksum 2>&1) && rc=0 || rc=1
+    local attr_size attr_storage attr_etag attr_checksum_type
+    attr_size=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ObjectSize',0))" 2>/dev/null || echo 0)
+    attr_storage=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('StorageClass',''))" 2>/dev/null || echo "")
+    attr_etag=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ETag',''))" 2>/dev/null || echo "")
+    attr_checksum_type=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('Checksum',{}).get('ChecksumType',''))" 2>/dev/null || echo "")
+    check "S3 GetObjectAttributes" "$( [ $rc -eq 0 ] && [ "$attr_size" = "${#body}" ] && [ "$attr_storage" = "STANDARD_IA" ] && [ -n "$attr_etag" ] && [ "$attr_checksum_type" = "FULL_OBJECT" ] && echo true || echo false )" "$out"
 
     out=$(aws_cmd s3api list-objects-v2 --bucket "$bucket" 2>&1) && rc=0 || rc=1
     found=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print('true' if any(o['Key']=='$key' for o in d.get('Contents',[])) else 'false')" 2>/dev/null || echo false)
@@ -187,11 +228,131 @@ run_s3() {
     out=$(aws_cmd s3api copy-object --bucket "$bucket" --copy-source "$bucket/$key" --key "${key}.copy" 2>&1) && rc=0 || rc=1
     check "S3 CopyObject" "$( [ $rc -eq 0 ] && echo true || echo false )" "$out"
 
+    out=$(aws_cmd s3api copy-object \
+        --bucket "$bucket" \
+        --copy-source "$bucket/$key" \
+        --key "${key}.replace" \
+        --metadata-directive REPLACE \
+        --metadata owner=team-b \
+        --content-type application/json \
+        --storage-class GLACIER 2>&1) && rc=0 || rc=1
+    check "S3 CopyObject metadata replace" "$( [ $rc -eq 0 ] && echo true || echo false )" "$out"
+
+    out=$(aws_cmd s3api head-object --bucket "$bucket" --key "${key}.replace" 2>&1) && rc=0 || rc=1
+    local replace_owner replace_storage replace_content_type
+    replace_owner=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('Metadata',{}).get('owner',''))" 2>/dev/null || echo "")
+    replace_storage=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('StorageClass',''))" 2>/dev/null || echo "")
+    replace_content_type=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ContentType',''))" 2>/dev/null || echo "")
+    check "S3 CopyObject replaced metadata visible" "$( [ "$replace_owner" = "team-b" ] && [ "$replace_storage" = "GLACIER" ] && [ "$replace_content_type" = "application/json" ] && echo true || echo false )" "$out"
+
+    out=$(aws_cmd s3api put-bucket-versioning \
+        --bucket "$bucket" \
+        --versioning-configuration Status=Enabled 2>&1) && rc=0 || rc=1
+    check "S3 PutBucketVersioning" "$( [ $rc -eq 0 ] && echo true || echo false )" "$out"
+
+    local version_key="versioned-object.txt"
+    local version_one="old"
+    local version_two="newer!"
+    local v1 v2 version_one_file version_two_file
+    version_one_file=$(mktemp)
+    version_two_file=$(mktemp)
+    printf '%s' "$version_one" > "$version_one_file"
+    printf '%s' "$version_two" > "$version_two_file"
+    out=$(aws_cmd s3api put-object --bucket "$bucket" --key "$version_key" --body "$version_one_file" 2>&1) && rc=0 || rc=1
+    v1=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('VersionId',''))" 2>/dev/null || echo "")
+    check "S3 PutObject version one" "$( [ $rc -eq 0 ] && [ -n "$v1" ] && echo true || echo false )" "$out"
+
+    out=$(aws_cmd s3api put-object --bucket "$bucket" --key "$version_key" --body "$version_two_file" 2>&1) && rc=0 || rc=1
+    v2=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('VersionId',''))" 2>/dev/null || echo "")
+    check "S3 PutObject version two" "$( [ $rc -eq 0 ] && [ -n "$v2" ] && [ "$v1" != "$v2" ] && echo true || echo false )" "$out"
+
+    out=$(aws_cmd s3api get-object-attributes \
+        --bucket "$bucket" \
+        --key "$version_key" \
+        --version-id "$v1" \
+        --object-attributes ObjectSize ETag StorageClass 2>&1) && rc=0 || rc=1
+    local version_one_size
+    version_one_size=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ObjectSize',0))" 2>/dev/null || echo 0)
+    check "S3 GetObjectAttributes version one" "$( [ $rc -eq 0 ] && [ "$version_one_size" = "${#version_one}" ] && echo true || echo false )" "$out"
+
+    out=$(aws_cmd s3api get-object-attributes \
+        --bucket "$bucket" \
+        --key "$version_key" \
+        --version-id "$v2" \
+        --object-attributes ObjectSize ETag StorageClass 2>&1) && rc=0 || rc=1
+    local version_two_size
+    version_two_size=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ObjectSize',0))" 2>/dev/null || echo 0)
+    check "S3 GetObjectAttributes version two" "$( [ $rc -eq 0 ] && [ "$version_two_size" = "${#version_two}" ] && echo true || echo false )" "$out"
+
+    local multipart_key="multipart-object.bin"
+    local upload_id part1_path part2_path part1_etag part2_etag multipart_file
+    out=$(aws_cmd s3api create-multipart-upload \
+        --bucket "$bucket" \
+        --key "$multipart_key" \
+        --metadata owner=team-a \
+        --storage-class STANDARD_IA 2>&1) && rc=0 || rc=1
+    upload_id=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('UploadId',''))" 2>/dev/null || echo "")
+    check "S3 CreateMultipartUpload" "$( [ $rc -eq 0 ] && [ -n "$upload_id" ] && echo true || echo false )" "$out"
+
+    part1_path=$(mktemp)
+    part2_path=$(mktemp)
+    printf 'part-one' > "$part1_path"
+    printf 'part-two' > "$part2_path"
+
+    out=$(aws_cmd s3api upload-part --bucket "$bucket" --key "$multipart_key" --upload-id "$upload_id" --part-number 1 --body "$part1_path" 2>&1) && rc=0 || rc=1
+    part1_etag=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ETag',''))" 2>/dev/null || echo "")
+    check "S3 UploadPart one" "$( [ $rc -eq 0 ] && [ -n "$part1_etag" ] && echo true || echo false )" "$out"
+
+    out=$(aws_cmd s3api upload-part --bucket "$bucket" --key "$multipart_key" --upload-id "$upload_id" --part-number 2 --body "$part2_path" 2>&1) && rc=0 || rc=1
+    part2_etag=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ETag',''))" 2>/dev/null || echo "")
+    check "S3 UploadPart two" "$( [ $rc -eq 0 ] && [ -n "$part2_etag" ] && echo true || echo false )" "$out"
+
+    multipart_file=$(mktemp)
+    cat > "$multipart_file" <<EOF
+{
+  "Parts": [
+    { "ETag": $part1_etag, "PartNumber": 1 },
+    { "ETag": $part2_etag, "PartNumber": 2 }
+  ]
+}
+EOF
+
+    out=$(aws_cmd s3api complete-multipart-upload \
+        --bucket "$bucket" \
+        --key "$multipart_key" \
+        --upload-id "$upload_id" \
+        --multipart-upload "file://$multipart_file" 2>&1) && rc=0 || rc=1
+    check "S3 CompleteMultipartUpload" "$( [ $rc -eq 0 ] && echo true || echo false )" "$out"
+
+    out=$(aws_cmd s3api get-object-attributes \
+        --bucket "$bucket" \
+        --key "$multipart_key" \
+        --object-attributes ObjectParts Checksum StorageClass \
+        --max-parts 1 2>&1) && rc=0 || rc=1
+    local mp_storage mp_checksum_type mp_parts_count mp_truncated mp_next_marker mp_first_part
+    mp_storage=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('StorageClass',''))" 2>/dev/null || echo "")
+    mp_checksum_type=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('Checksum',{}).get('ChecksumType',''))" 2>/dev/null || echo "")
+    mp_parts_count=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); parts=d.get('ObjectParts',{}); print(parts.get('PartsCount', parts.get('TotalPartsCount', 0)))" 2>/dev/null || echo 0)
+    mp_truncated=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(str(d.get('ObjectParts',{}).get('IsTruncated',False)).lower())" 2>/dev/null || echo false)
+    mp_next_marker=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ObjectParts',{}).get('NextPartNumberMarker',0))" 2>/dev/null || echo 0)
+    mp_first_part=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); parts=d.get('ObjectParts',{}).get('Parts',[]); print(parts[0].get('PartNumber',0) if parts else 0)" 2>/dev/null || echo 0)
+    check "S3 GetObjectAttributes multipart object parts" "$( [ $rc -eq 0 ] && [ "$mp_storage" = "STANDARD_IA" ] && [ "$mp_checksum_type" = "COMPOSITE" ] && [ "$mp_parts_count" = "2" ] && [ "$mp_truncated" = "true" ] && [ "$mp_next_marker" = "1" ] && [ "$mp_first_part" = "1" ] && echo true || echo false )" "$out"
+
+    local invalid_url="${ENDPOINT}/${bucket}/${key}?attributes"
+    out=$(curl -sS -i -H 'x-amz-object-attributes: ETag,UnknownThing' "$invalid_url" 2>&1) && rc=0 || rc=1
+    local invalid_ok
+    invalid_ok=$(echo "$out" | python3 -c "import sys; txt=sys.stdin.read(); ok=(' 400 ' in txt or 'HTTP/1.1 400' in txt or 'HTTP/2 400' in txt) and 'InvalidArgument' in txt; print('true' if ok else 'false')" 2>/dev/null || echo false)
+    check "S3 GetObjectAttributes invalid selector" "$invalid_ok" "$out"
+
     out=$(aws_cmd s3api delete-object --bucket "$bucket" --key "$key" 2>&1) && rc=0 || rc=1
     check "S3 DeleteObject" "$( [ $rc -eq 0 ] && echo true || echo false )" "$out"
 
+    aws_cmd s3api delete-object --bucket "$bucket" --key "${key}.replace" >/dev/null 2>&1 || true
     out=$(aws_cmd s3api delete-object --bucket "$bucket" --key "${key}.copy" 2>&1) && rc=0 || rc=1
+    aws_cmd s3api delete-object --bucket "$bucket" --key "$version_key" >/dev/null 2>&1 || true
+    aws_cmd s3api delete-object --bucket "$bucket" --key "$multipart_key" >/dev/null 2>&1 || true
     aws_cmd s3api delete-bucket --bucket "$bucket" >/dev/null 2>&1 || true
+    rm -f "$body_file" "$version_one_file" "$version_two_file" "$part1_path" "$part2_path" "$multipart_file"
     check "S3 DeleteBucket" "true"
 }
 
