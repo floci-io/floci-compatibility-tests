@@ -11,7 +11,7 @@
 import { SSMClient, PutParameterCommand, GetParameterCommand, DeleteParameterCommand, GetParametersByPathCommand, DescribeParametersCommand } from "@aws-sdk/client-ssm";
 import { SQSClient, CreateQueueCommand, SendMessageCommand, ReceiveMessageCommand, DeleteMessageCommand, GetQueueAttributesCommand, DeleteQueueCommand, SendMessageBatchCommand, SetQueueAttributesCommand } from "@aws-sdk/client-sqs";
 import { SNSClient, CreateTopicCommand, SubscribeCommand, PublishCommand, ListTopicsCommand, ListSubscriptionsByTopicCommand, UnsubscribeCommand, DeleteTopicCommand, GetSubscriptionAttributesCommand, SetSubscriptionAttributesCommand, PublishBatchCommand } from "@aws-sdk/client-sns";
-import { S3Client, CreateBucketCommand, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command, DeleteBucketCommand, HeadObjectCommand, ListBucketsCommand, CopyObjectCommand, GetBucketLocationCommand } from "@aws-sdk/client-s3";
+import { S3Client, CreateBucketCommand, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command, DeleteBucketCommand, HeadObjectCommand, HeadBucketCommand, ListBucketsCommand, CopyObjectCommand, GetBucketLocationCommand } from "@aws-sdk/client-s3";
 import { DynamoDBClient, CreateTableCommand, PutItemCommand, GetItemCommand, DeleteItemCommand, ScanCommand, QueryCommand, UpdateItemCommand, DeleteTableCommand, ListTablesCommand, DescribeTableCommand } from "@aws-sdk/client-dynamodb";
 import { LambdaClient, CreateFunctionCommand, GetFunctionCommand, ListFunctionsCommand, DeleteFunctionCommand, CreateAliasCommand, GetAliasCommand, ListAliasesCommand, UpdateAliasCommand, DeleteAliasCommand, PublishVersionCommand } from "@aws-sdk/client-lambda";
 import { IAMClient, CreateRoleCommand, GetRoleCommand, DeleteRoleCommand, ListRolesCommand, CreatePolicyCommand, DeletePolicyCommand, AttachRolePolicyCommand, DetachRolePolicyCommand } from "@aws-sdk/client-iam";
@@ -271,24 +271,53 @@ async function testSns() {
 async function testS3() {
   console.log("\n=== S3 ===");
   const s3 = makeClient(S3Client, { forcePathStyle: true });
+  const euS3 = makeClient(S3Client, { forcePathStyle: true, region: "eu-central-1" });
 
   const bucket = "floci-node-test-bucket";
 
-  await tryOk("CreateBucket", () =>
-    s3.send(new CreateBucketCommand({ Bucket: bucket })));
+  await tryOk("CreateBucket", async () => {
+    const r = await s3.send(new CreateBucketCommand({ Bucket: bucket }));
+    check("CreateBucket Location header mapped", r.Location === `/${bucket}`);
+  });
 
   // CreateBucket with LocationConstraint (regression: issue #11)
   const euBucket = "floci-node-test-bucket-eu";
-  await tryOk("CreateBucket with LocationConstraint", () =>
-    s3.send(new CreateBucketCommand({
+  await tryOk("CreateBucket with LocationConstraint", async () => {
+    const r = await s3.send(new CreateBucketCommand({
       Bucket: euBucket,
       CreateBucketConfiguration: { LocationConstraint: "eu-central-1" },
-    })));
+    }));
+    check("CreateBucket with LocationConstraint maps Location", r.Location === `/${euBucket}`);
+  });
 
   await tryOk("GetBucketLocation", async () => {
     const r = await s3.send(new GetBucketLocationCommand({ Bucket: euBucket }));
     check("LocationConstraint is eu-central-1", r.LocationConstraint === "eu-central-1");
   });
+
+  const signedRegionBucket = "floci-node-test-bucket-signed-region";
+  await tryOk("CreateBucket uses signing region when body empty", async () => {
+    const r = await euS3.send(new CreateBucketCommand({ Bucket: signedRegionBucket }));
+    check("CreateBucket uses signing region Location", r.Location === `/${signedRegionBucket}`);
+    const head = await euS3.send(new HeadBucketCommand({ Bucket: signedRegionBucket }));
+    check("HeadBucket exposes stored region", head.BucketRegion === "eu-central-1");
+    const loc = await euS3.send(new GetBucketLocationCommand({ Bucket: signedRegionBucket }));
+    check("Empty-body CreateBucket stores signing region", loc.LocationConstraint === "eu-central-1");
+  });
+
+  try {
+    await s3.send(new CreateBucketCommand({
+      Bucket: "floci-node-invalid-location-bucket",
+      CreateBucketConfiguration: { LocationConstraint: "us-east-1" },
+    }));
+    check("CreateBucket rejects explicit us-east-1 LocationConstraint", false, "Expected InvalidLocationConstraint");
+  } catch (e) {
+    check(
+      "CreateBucket rejects explicit us-east-1 LocationConstraint",
+      e?.name === "InvalidLocationConstraint" || `${e?.message || ""}`.includes("InvalidLocationConstraint"),
+      e?.message || e?.name
+    );
+  }
 
   await tryOk("ListBuckets", async () => {
     const r = await s3.send(new ListBucketsCommand({}));
@@ -324,9 +353,12 @@ async function testS3() {
   await tryOk("DeleteObject copy", () =>
     s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: "test-copy.txt" })));
 
-  await s3.send(new DeleteBucketCommand({ Bucket: euBucket })).catch(() => {});
   await tryOk("DeleteBucket", () =>
     s3.send(new DeleteBucketCommand({ Bucket: bucket })));
+  await tryOk("DeleteBucket signed region", () =>
+    euS3.send(new DeleteBucketCommand({ Bucket: signedRegionBucket })));
+  await tryOk("DeleteBucket eu", () =>
+    s3.send(new DeleteBucketCommand({ Bucket: euBucket })));
 
   await tryFail("GetObject missing", () =>
     s3.send(new GetObjectCommand({ Bucket: bucket, Key: "missing.txt" })));
