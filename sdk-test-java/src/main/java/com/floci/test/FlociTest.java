@@ -50,6 +50,7 @@ import java.util.*;
  *   <li>{@code cloudwatch-logs}
  *   <li>{@code cloudwatch-metrics}
  *   <li>{@code secretsmanager}
+ *   <li>{@code sfn-jsonata}
  *   <li>{@code ses}
  * </ul>
  */
@@ -96,6 +97,7 @@ public class FlociTest {
                 new KmsTests(),
                 new CognitoTests(),
                 new StepFunctionsTests(),
+                new StepFunctionsJsonataTests(),
                 new SesTests()
         );
 
