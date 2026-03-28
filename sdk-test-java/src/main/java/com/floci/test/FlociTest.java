@@ -1,44 +1,6 @@
 package com.floci.test;
 
-import com.floci.test.tests.ApiGatewayExecuteTests;
-import com.floci.test.tests.ApiGatewayTests;
-import com.floci.test.tests.ApiGatewayV2Tests;
-import com.floci.test.tests.CloudWatchLogsTests;
-import com.floci.test.tests.CloudWatchMetricsTests;
-import com.floci.test.tests.CognitoTests;
-import com.floci.test.tests.DynamoDbAdvancedTests;
-import com.floci.test.tests.DynamoDbLsiTests;
-import com.floci.test.tests.DynamoDbStreamsTests;
-import com.floci.test.tests.DynamoDbTests;
-import com.floci.test.tests.ElastiCacheLettuceTests;
-import com.floci.test.tests.ElastiCacheManagementTests;
-import com.floci.test.tests.ElastiCacheTests;
-import com.floci.test.tests.EventBridgeTests;
-import com.floci.test.tests.IamPerformanceTests;
-import com.floci.test.tests.IamTests;
-import com.floci.test.tests.KinesisTests;
-import com.floci.test.tests.KmsTests;
-import com.floci.test.tests.LambdaConcurrentTests;
-import com.floci.test.tests.LambdaHttpTests;
-import com.floci.test.tests.LambdaInvokeTests;
-import com.floci.test.tests.LambdaTests;
-import com.floci.test.tests.LambdaWarmPoolTests;
-import com.floci.test.tests.RdsClusterTests;
-import com.floci.test.tests.RdsIamTests;
-import com.floci.test.tests.RdsManagementTests;
-import com.floci.test.tests.S3AdvancedTests;
-import com.floci.test.tests.S3NotificationTests;
-import com.floci.test.tests.S3ObjectLockTests;
-import com.floci.test.tests.S3Tests;
-import com.floci.test.tests.S3VirtualHostTests;
-import com.floci.test.tests.SecretsManagerTests;
-import com.floci.test.tests.SesTests;
-import com.floci.test.tests.SnsTests;
-import com.floci.test.tests.SqsLambdaEsmTests;
-import com.floci.test.tests.SqsTests;
-import com.floci.test.tests.SsmTests;
-import com.floci.test.tests.StepFunctionsTests;
-import com.floci.test.tests.StsTests;
+import com.floci.test.tests.*;
 
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -91,6 +53,7 @@ import java.util.Set;
  *   <li>{@code cloudwatch-metrics}
  *   <li>{@code secretsmanager}
  *   <li>{@code sfn-jsonata}
+ *   <li>{@code s3-large-object}
  *   <li>{@code s3-virtual-host}
  *   <li>{@code ses}
  * </ul>
@@ -108,6 +71,7 @@ public class FlociTest {
                 new S3Tests(),
                 new S3ObjectLockTests(),
                 new S3AdvancedTests(),
+                new S3LargeObjectTests(),
                 new S3VirtualHostTests(),
                 new DynamoDbTests(),
                 new DynamoDbAdvancedTests(),

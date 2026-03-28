@@ -59,11 +59,7 @@ async fn run_s3(endpoint: &str) {
     println!("--- S3 Tests ---");
 
     let base = base_config(endpoint).await;
-    let s3 = aws_sdk_s3::Client::from_conf(
-        S3Builder::from(&base)
-            .force_path_style(true)
-            .build(),
-    );
+    let s3 = aws_sdk_s3::Client::from_conf(S3Builder::from(&base).force_path_style(true).build());
 
     let bucket = "rust-sdk-test-bucket";
     let key = "test-object.json";
@@ -99,7 +95,11 @@ async fn run_s3(endpoint: &str) {
     match s3.list_buckets().send().await {
         Ok(r) => check(
             "S3 ListBuckets",
-            if r.buckets().len() > 0 { ok() } else { Err("no buckets listed".into()) },
+            if r.buckets().len() > 0 {
+                ok()
+            } else {
+                Err("no buckets listed".into())
+            },
         ),
         Err(e) => check("S3 ListBuckets", err(e)),
     }
@@ -128,7 +128,10 @@ async fn run_s3(endpoint: &str) {
                     if b.as_ref() == content.as_bytes() {
                         ok()
                     } else {
-                        Err(format!("content mismatch: {:?}", String::from_utf8_lossy(&b)))
+                        Err(format!(
+                            "content mismatch: {:?}",
+                            String::from_utf8_lossy(&b)
+                        ))
                     },
                 ),
                 Err(e) => check("S3 GetObject", Err(e.to_string())),
@@ -144,9 +147,13 @@ async fn run_s3(endpoint: &str) {
             check(
                 "S3 HeadObject LastModified second precision",
                 match r.last_modified() {
-                    Some(t) => if t.subsec_nanos() == 0 { ok() } else {
-                        Err(format!("sub-second nanos: {}", t.subsec_nanos()))
-                    },
+                    Some(t) => {
+                        if t.subsec_nanos() == 0 {
+                            ok()
+                        } else {
+                            Err(format!("sub-second nanos: {}", t.subsec_nanos()))
+                        }
+                    }
                     None => Err("no last_modified".to_string()),
                 },
             );
@@ -158,7 +165,11 @@ async fn run_s3(endpoint: &str) {
     match s3.list_objects_v2().bucket(bucket).send().await {
         Ok(r) => check(
             "S3 ListObjectsV2",
-            if r.contents().len() > 0 { ok() } else { Err("no objects listed".into()) },
+            if r.contents().len() > 0 {
+                ok()
+            } else {
+                Err("no objects listed".into())
+            },
         ),
         Err(e) => check("S3 ListObjectsV2", err(e)),
     }
@@ -188,10 +199,54 @@ async fn run_s3(endpoint: &str) {
             {
                 ok()
             } else {
-                Err(format!("unexpected location: {:?}", r.location_constraint()))
+                Err(format!(
+                    "unexpected location: {:?}",
+                    r.location_constraint()
+                ))
             },
         ),
         Err(e) => check("S3 GetBucketLocation", err(e)),
+    }
+
+    // Large object upload (25 MB) — validates fix for upload size limit
+    let large_key = "large-object-25mb.bin";
+    let large_size: i64 = 25 * 1024 * 1024;
+    let large_payload = vec![0u8; large_size as usize];
+    match s3
+        .put_object()
+        .bucket(bucket)
+        .key(large_key)
+        .body(bytes::Bytes::from(large_payload).into())
+        .content_type("application/octet-stream")
+        .content_length(large_size)
+        .send()
+        .await
+    {
+        Ok(_) => {
+            check("S3 PutObject 25 MB", ok());
+            match s3.head_object().bucket(bucket).key(large_key).send().await {
+                Ok(r) => check(
+                    "S3 HeadObject 25 MB content-length",
+                    if r.content_length() == Some(large_size) {
+                        ok()
+                    } else {
+                        Err(format!(
+                            "expected {} bytes, got {:?}",
+                            large_size,
+                            r.content_length()
+                        ))
+                    },
+                ),
+                Err(e) => check("S3 HeadObject 25 MB content-length", err(e)),
+            }
+            let _ = s3
+                .delete_object()
+                .bucket(bucket)
+                .key(large_key)
+                .send()
+                .await;
+        }
+        Err(e) => check("S3 PutObject 25 MB", err(e)),
     }
 
     // cleanup
@@ -250,15 +305,14 @@ async fn run_ssm(endpoint: &str) {
         Err(e) => check("SSM GetParameter", err(e)),
     }
 
-    match ssm
-        .get_parameters()
-        .names(name)
-        .send()
-        .await
-    {
+    match ssm.get_parameters().names(name).send().await {
         Ok(r) => check(
             "SSM GetParameters",
-            if r.parameters().len() == 1 { ok() } else { Err("expected 1 parameter".into()) },
+            if r.parameters().len() == 1 {
+                ok()
+            } else {
+                Err("expected 1 parameter".into())
+            },
         ),
         Err(e) => check("SSM GetParameters", err(e)),
     }
@@ -266,7 +320,11 @@ async fn run_ssm(endpoint: &str) {
     match ssm.describe_parameters().send().await {
         Ok(r) => check(
             "SSM DescribeParameters",
-            if !r.parameters().is_empty() { ok() } else { Err("no parameters".into()) },
+            if !r.parameters().is_empty() {
+                ok()
+            } else {
+                Err("no parameters".into())
+            },
         ),
         Err(e) => check("SSM DescribeParameters", err(e)),
     }
@@ -279,7 +337,11 @@ async fn run_ssm(endpoint: &str) {
     {
         Ok(r) => check(
             "SSM GetParametersByPath",
-            if !r.parameters().is_empty() { ok() } else { Err("no parameters".into()) },
+            if !r.parameters().is_empty() {
+                ok()
+            } else {
+                Err("no parameters".into())
+            },
         ),
         Err(e) => check("SSM GetParametersByPath", err(e)),
     }
@@ -314,7 +376,11 @@ async fn run_sqs(endpoint: &str) {
     match sqs.list_queues().send().await {
         Ok(r) => check(
             "SQS ListQueues",
-            if !r.queue_urls().is_empty() { ok() } else { Err("no queues".into()) },
+            if !r.queue_urls().is_empty() {
+                ok()
+            } else {
+                Err("no queues".into())
+            },
         ),
         Err(e) => check("SQS ListQueues", err(e)),
     }
@@ -340,9 +406,15 @@ async fn run_sqs(endpoint: &str) {
                     let msgs = r.messages();
                     check(
                         "SQS ReceiveMessage",
-                        if msgs.len() == 1 { ok() } else { Err("expected 1 message".into()) },
+                        if msgs.len() == 1 {
+                            ok()
+                        } else {
+                            Err("expected 1 message".into())
+                        },
                     );
-                    msgs.first().and_then(|m| m.receipt_handle()).map(|s| s.to_string())
+                    msgs.first()
+                        .and_then(|m| m.receipt_handle())
+                        .map(|s| s.to_string())
                 }
                 Err(e) => {
                     check("SQS ReceiveMessage", err(e));
@@ -357,7 +429,13 @@ async fn run_sqs(endpoint: &str) {
     };
 
     if let Some(handle) = receipt {
-        match sqs.delete_message().queue_url(&url).receipt_handle(handle).send().await {
+        match sqs
+            .delete_message()
+            .queue_url(&url)
+            .receipt_handle(handle)
+            .send()
+            .await
+        {
             Ok(_) => check("SQS DeleteMessage", ok()),
             Err(e) => check("SQS DeleteMessage", err(e)),
         }
@@ -380,7 +458,11 @@ async fn run_sts(endpoint: &str) {
     match sts.get_caller_identity().send().await {
         Ok(r) => check(
             "STS GetCallerIdentity",
-            if r.account().is_some() { ok() } else { Err("no account id".into()) },
+            if r.account().is_some() {
+                ok()
+            } else {
+                Err("no account id".into())
+            },
         ),
         Err(e) => check("STS GetCallerIdentity", err(e)),
     }
@@ -402,7 +484,9 @@ async fn run_kms(endpoint: &str) {
     {
         Ok(r) => {
             check("KMS CreateKey", ok());
-            r.key_metadata().map(|m| m.key_id().to_string()).unwrap_or_default()
+            r.key_metadata()
+                .map(|m| m.key_id().to_string())
+                .unwrap_or_default()
         }
         Err(e) => {
             check("KMS CreateKey", err(e));
@@ -413,7 +497,11 @@ async fn run_kms(endpoint: &str) {
     match kms.list_keys().send().await {
         Ok(r) => check(
             "KMS ListKeys",
-            if !r.keys().is_empty() { ok() } else { Err("no keys".into()) },
+            if !r.keys().is_empty() {
+                ok()
+            } else {
+                Err("no keys".into())
+            },
         ),
         Err(e) => check("KMS ListKeys", err(e)),
     }
@@ -426,12 +514,25 @@ async fn run_kms(endpoint: &str) {
         .await
     {
         Ok(r) => {
-            let cipher = r.ciphertext_blob().cloned().unwrap_or_else(|| aws_smithy_types::Blob::new([]));
-            check("KMS Encrypt", if !cipher.as_ref().is_empty() { ok() } else { Err("empty ciphertext".into()) });
+            let cipher = r
+                .ciphertext_blob()
+                .cloned()
+                .unwrap_or_else(|| aws_smithy_types::Blob::new([]));
+            check(
+                "KMS Encrypt",
+                if !cipher.as_ref().is_empty() {
+                    ok()
+                } else {
+                    Err("empty ciphertext".into())
+                },
+            );
 
             match kms.decrypt().ciphertext_blob(cipher).send().await {
                 Ok(d) => {
-                    let plain = d.plaintext().cloned().unwrap_or_else(|| aws_smithy_types::Blob::new([]));
+                    let plain = d
+                        .plaintext()
+                        .cloned()
+                        .unwrap_or_else(|| aws_smithy_types::Blob::new([]));
                     check(
                         "KMS Decrypt",
                         if plain.as_ref() == b"rust-kms-test" {
@@ -448,7 +549,12 @@ async fn run_kms(endpoint: &str) {
     }
 
     // schedule deletion (min 7 days)
-    let _ = kms.schedule_key_deletion().key_id(&key_id).pending_window_in_days(7).send().await;
+    let _ = kms
+        .schedule_key_deletion()
+        .key_id(&key_id)
+        .pending_window_in_days(7)
+        .send()
+        .await;
 }
 
 // ── Secrets Manager ───────────────────────────────────────────────────────────
@@ -475,7 +581,11 @@ async fn run_secrets_manager(endpoint: &str) {
     match sm.get_secret_value().secret_id(secret_name).send().await {
         Ok(r) => check(
             "SecretsManager GetSecretValue",
-            if r.secret_string().is_some() { ok() } else { Err("no secret string".into()) },
+            if r.secret_string().is_some() {
+                ok()
+            } else {
+                Err("no secret string".into())
+            },
         ),
         Err(e) => check("SecretsManager GetSecretValue", err(e)),
     }
@@ -483,7 +593,11 @@ async fn run_secrets_manager(endpoint: &str) {
     match sm.list_secrets().send().await {
         Ok(r) => check(
             "SecretsManager ListSecrets",
-            if !r.secret_list().is_empty() { ok() } else { Err("no secrets".into()) },
+            if !r.secret_list().is_empty() {
+                ok()
+            } else {
+                Err("no secrets".into())
+            },
         ),
         Err(e) => check("SecretsManager ListSecrets", err(e)),
     }
@@ -515,7 +629,11 @@ fn resolve_enabled(args: &[String]) -> Option<HashSet<String>> {
         }
     }
 
-    if groups.is_empty() { None } else { Some(groups) }
+    if groups.is_empty() {
+        None
+    } else {
+        Some(groups)
+    }
 }
 
 #[tokio::main]
@@ -528,12 +646,15 @@ async fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let enabled = resolve_enabled(&args);
 
-    let groups: Vec<(&str, fn(&str) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + '_>>)> = vec![
-        ("ssm",            |ep| Box::pin(run_ssm(ep))),
-        ("sqs",            |ep| Box::pin(run_sqs(ep))),
-        ("s3",             |ep| Box::pin(run_s3(ep))),
-        ("sts",            |ep| Box::pin(run_sts(ep))),
-        ("kms",            |ep| Box::pin(run_kms(ep))),
+    let groups: Vec<(
+        &str,
+        fn(&str) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + '_>>,
+    )> = vec![
+        ("ssm", |ep| Box::pin(run_ssm(ep))),
+        ("sqs", |ep| Box::pin(run_sqs(ep))),
+        ("s3", |ep| Box::pin(run_s3(ep))),
+        ("sts", |ep| Box::pin(run_sts(ep))),
+        ("kms", |ep| Box::pin(run_kms(ep))),
         ("secretsmanager", |ep| Box::pin(run_secrets_manager(ep))),
     ];
 
