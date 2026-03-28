@@ -69,6 +69,11 @@ public class StepFunctionsDynamoDbTests implements TestGroup {
                 testAwsSdkBatchWriteAndGet(ctx, sfn);
                 testAwsSdkTransactWriteAndGet(ctx, sfn);
                 testAwsSdkTableLifecycle(ctx, sfn);
+
+                // Error path tests
+                testAwsSdkErrorTableNotFound(ctx, sfn);
+                testAwsSdkErrorConditionFailed(ctx, sfn);
+                testOptimizedErrorTableNotFound(ctx, sfn);
             } catch (Exception e) {
                 ctx.check("SFN-DynamoDB unexpected error", false, e);
             } finally {
@@ -688,6 +693,123 @@ public class StepFunctionsDynamoDbTests implements TestGroup {
             ctx.check("SDK DeleteTable response", deleteResult.has("TableDescription"));
         } catch (Exception e) {
             ctx.check("SDK TableLifecycle", false, e);
+        }
+    }
+
+    // ── Error Path Tests ───────────────────────────────────────────────
+
+    private void testAwsSdkErrorTableNotFound(TestContext ctx, SfnClient sfn) {
+        String definition = """
+                {
+                  "StartAt": "GetItem",
+                  "States": {
+                    "GetItem": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::aws-sdk:dynamodb:getItem",
+                      "Parameters": {
+                        "TableName": "nonexistent-table-12345",
+                        "Key": { "pk": {"S": "x"} }
+                      },
+                      "End": true
+                    }
+                  }
+                }""";
+
+        try {
+            String smArn = createStateMachine(sfn, "sdk-err-notfound", definition);
+            String execArn = startExecution(sfn, smArn, "{}");
+            DescribeExecutionResponse resp = waitForExecution(sfn, execArn);
+            sfn.deleteStateMachine(b -> b.stateMachineArn(smArn));
+
+            boolean failed = resp.status() == ExecutionStatus.FAILED;
+            String error = resp.error();
+            // AWS SDK integration errors use DynamoDb. prefix (mixed case)
+            boolean correctPrefix = error != null && error.startsWith("DynamoDb.");
+            boolean correctError = error != null && error.contains("ResourceNotFoundException");
+            ctx.check("SDK error: table not found fails", failed);
+            ctx.check("SDK error: prefix is DynamoDb.", correctPrefix);
+            ctx.check("SDK error: ResourceNotFoundException", correctError);
+            System.out.println("        -> error=" + error + " cause=" + resp.cause());
+        } catch (Exception e) {
+            ctx.check("SDK error: table not found", false, e);
+        }
+    }
+
+    private void testAwsSdkErrorConditionFailed(TestContext ctx, SfnClient sfn) {
+        String definition = """
+                {
+                  "StartAt": "PutItem",
+                  "States": {
+                    "PutItem": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
+                      "Parameters": {
+                        "TableName": "%s",
+                        "Item": { "pk": {"S": "condition-test"} },
+                        "ConditionExpression": "attribute_not_exists(pk)"
+                      },
+                      "End": true
+                    }
+                  }
+                }""".formatted(TABLE_NAME);
+
+        try {
+            // Put the item first so the condition fails on second put
+            executeAndWait(sfn, "sdk-err-cond-setup", definition, "{}");
+
+            // Second put should fail with ConditionalCheckFailedException
+            String smArn = createStateMachine(sfn, "sdk-err-cond", definition);
+            String execArn = startExecution(sfn, smArn, "{}");
+            DescribeExecutionResponse resp = waitForExecution(sfn, execArn);
+            sfn.deleteStateMachine(b -> b.stateMachineArn(smArn));
+
+            boolean failed = resp.status() == ExecutionStatus.FAILED;
+            String error = resp.error();
+            boolean correctPrefix = error != null && error.startsWith("DynamoDb.");
+            boolean correctError = error != null && error.contains("ConditionalCheckFailed");
+            ctx.check("SDK error: condition fails", failed);
+            ctx.check("SDK error: condition prefix DynamoDb.", correctPrefix);
+            ctx.check("SDK error: ConditionalCheckFailed", correctError);
+            System.out.println("        -> error=" + error + " cause=" + resp.cause());
+        } catch (Exception e) {
+            ctx.check("SDK error: condition failed", false, e);
+        }
+    }
+
+    private void testOptimizedErrorTableNotFound(TestContext ctx, SfnClient sfn) {
+        String definition = """
+                {
+                  "StartAt": "GetItem",
+                  "States": {
+                    "GetItem": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::dynamodb:getItem",
+                      "Parameters": {
+                        "TableName": "nonexistent-table-12345",
+                        "Key": { "pk": {"S": "x"} }
+                      },
+                      "End": true
+                    }
+                  }
+                }""";
+
+        try {
+            String smArn = createStateMachine(sfn, "opt-err-notfound", definition);
+            String execArn = startExecution(sfn, smArn, "{}");
+            DescribeExecutionResponse resp = waitForExecution(sfn, execArn);
+            sfn.deleteStateMachine(b -> b.stateMachineArn(smArn));
+
+            boolean failed = resp.status() == ExecutionStatus.FAILED;
+            String error = resp.error();
+            // Optimized integration errors use DynamoDB. prefix (uppercase DB)
+            boolean correctPrefix = error != null && error.startsWith("DynamoDB.");
+            boolean correctError = error != null && error.contains("ResourceNotFoundException");
+            ctx.check("Optimized error: table not found fails", failed);
+            ctx.check("Optimized error: prefix is DynamoDB.", correctPrefix);
+            ctx.check("Optimized error: ResourceNotFoundException", correctError);
+            System.out.println("        -> error=" + error + " cause=" + resp.cause());
+        } catch (Exception e) {
+            ctx.check("Optimized error: table not found", false, e);
         }
     }
 
