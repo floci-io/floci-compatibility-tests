@@ -140,6 +140,7 @@ public class FlociTest {
                 new CognitoTests(),
                 new StepFunctionsTests(),
                 new StepFunctionsJsonataTests(),
+                new StepFunctionsDynamoDbTests(),
                 new SesTests()
         );
 
