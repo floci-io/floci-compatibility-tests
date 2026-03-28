@@ -1,4 +1,10 @@
-FROM amazon/aws-cli:2.22.35
+FROM amazon/aws-cli:latest
+
+RUN yum install -y python3 unzip >/dev/null 2>&1 \
+    && curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscli.zip \
+    && cd /tmp && unzip -qo awscli.zip \
+    && ./aws/install --update >/dev/null 2>&1 \
+    && rm -rf /tmp/aws /tmp/awscli.zip
 
 WORKDIR /app
 
