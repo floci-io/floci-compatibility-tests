@@ -650,7 +650,7 @@ def run_s3():
     except Exception as e:
         check("S3 Object deleted", False, e)
 
-    # Large object upload (25 MB) — validates fix for upload size limit (PR #45)
+    # Large object upload (25 MB) — validates fix for upload size limit
     large_key = "large-object-25mb.bin"
     large_payload = b'\x00' * (25 * 1024 * 1024)
     try:

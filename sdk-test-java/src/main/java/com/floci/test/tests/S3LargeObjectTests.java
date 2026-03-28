@@ -8,7 +8,7 @@ import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 
 /**
  * Validates large S3 object uploads (25 MB).
- * Protects against regressions of the upload-size limit fix (PR #45).
+ * Protects against regressions of the upload-size limit fix.
  */
 public class S3LargeObjectTests implements TestGroup {
 
@@ -35,7 +35,7 @@ public class S3LargeObjectTests implements TestGroup {
             // Create dedicated bucket
             s3.createBucket(b -> b.bucket(bucket));
 
-            // Upload 25 MB object — validates fix for upload size limit (PR #45)
+            // Upload 25 MB object — validates fix for upload size limit
             try {
                 s3.putObject(
                         b -> b.bucket(bucket).key(key)

@@ -338,7 +338,7 @@ func runS3(cfg aws.Config) {
 	})
 	check("S3 CopyObject", err)
 
-	// Large object upload (25 MB) — validates fix for upload size limit (PR #45)
+	// Large object upload (25 MB) — validates fix for upload size limit
 	const largeKey = "large-object-25mb.bin"
 	largeSizeBytes := int64(25 * 1024 * 1024)
 	largePayload := make([]byte, largeSizeBytes)

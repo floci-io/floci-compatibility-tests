@@ -208,7 +208,7 @@ async fn run_s3(endpoint: &str) {
         Err(e) => check("S3 GetBucketLocation", err(e)),
     }
 
-    // Large object upload (25 MB) — validates fix for upload size limit (PR #45)
+    // Large object upload (25 MB) — validates fix for upload size limit
     let large_key = "large-object-25mb.bin";
     let large_size: i64 = 25 * 1024 * 1024;
     let large_payload = vec![0u8; large_size as usize];

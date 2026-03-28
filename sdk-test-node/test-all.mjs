@@ -347,7 +347,7 @@ async function testS3() {
     check("Objects listed", r.KeyCount >= 2);
   });
 
-  // Large object upload (25 MB) — validates fix for upload size limit (PR #45)
+  // Large object upload (25 MB) — validates fix for upload size limit
   await tryOk("PutObject 25 MB", () =>
     s3.send(new PutObjectCommand({
       Bucket: bucket,

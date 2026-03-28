@@ -344,7 +344,7 @@ EOF
     invalid_ok=$(echo "$out" | python3 -c "import sys; txt=sys.stdin.read(); ok=(' 400 ' in txt or 'HTTP/1.1 400' in txt or 'HTTP/2 400' in txt) and 'InvalidArgument' in txt; print('true' if ok else 'false')" 2>/dev/null || echo false)
     check "S3 GetObjectAttributes invalid selector" "$invalid_ok" "$out"
 
-    # Large object upload (25 MB) — validates fix for upload size limit (PR #45)
+    # Large object upload (25 MB) — validates fix for upload size limit
     local large_key="large-object-25mb.bin"
     local large_file
     large_file=$(mktemp)
