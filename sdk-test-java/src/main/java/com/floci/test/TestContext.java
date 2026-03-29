@@ -16,6 +16,11 @@ public class TestContext {
                     ? System.getenv("FLOCI_ENDPOINT")
                     : "http://localhost:4566");
 
+    /** Returns true when running against real AWS (no endpoint override). */
+    public boolean isRealAws() {
+        return "aws".equalsIgnoreCase(System.getenv("FLOCI_TARGET"));
+    }
+
     /** Hostname to use for direct TCP connections (JDBC, Redis). Derived from FLOCI_ENDPOINT. */
     public final String proxyHost = endpoint.getHost();
 
