@@ -650,6 +650,26 @@ def run_s3():
     except Exception as e:
         check("S3 Object deleted", False, e)
 
+    # Large object upload (25 MB) — validates fix for upload size limit
+    large_key = "large-object-25mb.bin"
+    large_payload = b'\x00' * (25 * 1024 * 1024)
+    try:
+        s3.put_object(Bucket=bucket, Key=large_key, Body=large_payload, ContentType="application/octet-stream")
+        check("S3 PutObject 25 MB", True)
+    except Exception as e:
+        check("S3 PutObject 25 MB", False, e)
+
+    try:
+        r = s3.head_object(Bucket=bucket, Key=large_key)
+        check("S3 HeadObject 25 MB content-length", r["ContentLength"] == 25 * 1024 * 1024)
+    except Exception as e:
+        check("S3 HeadObject 25 MB content-length", False, e)
+
+    try:
+        s3.delete_object(Bucket=bucket, Key=large_key)
+    except Exception:
+        pass
+
     try:
         s3.delete_bucket(Bucket=eu_bucket)
     except Exception:
@@ -1576,7 +1596,7 @@ def run_kinesis():
 def run_cloudwatch_metrics():
     print("--- CloudWatch Metrics Tests ---")
     cw = client("cloudwatch")
-    ns_a = "TestApp/PySdkMetricsTests"
+    ns_a = f"TestApp/PySdkMetricsTests/{int(time.time() * 1000)}"
     ns_b = "TestApp/OtherNamespace"
     now = datetime.datetime.now(datetime.timezone.utc)
 

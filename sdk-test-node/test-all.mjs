@@ -347,6 +347,23 @@ async function testS3() {
     check("Objects listed", r.KeyCount >= 2);
   });
 
+  // Large object upload (25 MB) — validates fix for upload size limit
+  await tryOk("PutObject 25 MB", () =>
+    s3.send(new PutObjectCommand({
+      Bucket: bucket,
+      Key: "large-object-25mb.bin",
+      Body: Buffer.alloc(25 * 1024 * 1024),
+      ContentType: "application/octet-stream",
+    })));
+
+  await tryOk("HeadObject 25 MB content-length", async () => {
+    const r = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: "large-object-25mb.bin" }));
+    check("ContentLength is 25 MB", r.ContentLength === 25 * 1024 * 1024);
+  });
+
+  await tryOk("DeleteObject 25 MB", () =>
+    s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: "large-object-25mb.bin" })));
+
   await tryOk("DeleteObject", () =>
     s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: "test.txt" })));
 

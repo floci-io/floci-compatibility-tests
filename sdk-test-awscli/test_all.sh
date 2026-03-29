@@ -344,6 +344,22 @@ EOF
     invalid_ok=$(echo "$out" | python3 -c "import sys; txt=sys.stdin.read(); ok=(' 400 ' in txt or 'HTTP/1.1 400' in txt or 'HTTP/2 400' in txt) and 'InvalidArgument' in txt; print('true' if ok else 'false')" 2>/dev/null || echo false)
     check "S3 GetObjectAttributes invalid selector" "$invalid_ok" "$out"
 
+    # Large object upload (25 MB) — validates fix for upload size limit
+    local large_key="large-object-25mb.bin"
+    local large_file
+    large_file=$(mktemp)
+    dd if=/dev/zero of="$large_file" bs=1048576 count=25 2>/dev/null
+    out=$(aws_cmd s3api put-object --bucket "$bucket" --key "$large_key" --body "$large_file" 2>&1) && rc=0 || rc=1
+    check "S3 PutObject 25 MB" "$( [ $rc -eq 0 ] && echo true || echo false )" "$out"
+    if [ $rc -eq 0 ]; then
+        out=$(aws_cmd s3api head-object --bucket "$bucket" --key "$large_key" 2>&1) && rc=0 || rc=1
+        local large_len
+        large_len=$(echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ContentLength',0))" 2>/dev/null || echo 0)
+        check "S3 HeadObject 25 MB content-length" "$( [ $rc -eq 0 ] && [ "$large_len" = "26214400" ] && echo true || echo false )" "$out"
+    fi
+    aws_cmd s3api delete-object --bucket "$bucket" --key "$large_key" >/dev/null 2>&1 || true
+    rm -f "$large_file"
+
     out=$(aws_cmd s3api delete-object --bucket "$bucket" --key "$key" 2>&1) && rc=0 || rc=1
     check "S3 DeleteObject" "$( [ $rc -eq 0 ] && echo true || echo false )" "$out"
 

@@ -338,6 +338,28 @@ func runS3(cfg aws.Config) {
 	})
 	check("S3 CopyObject", err)
 
+	// Large object upload (25 MB) — validates fix for upload size limit
+	const largeKey = "large-object-25mb.bin"
+	largeSizeBytes := int64(25 * 1024 * 1024)
+	largePayload := make([]byte, largeSizeBytes)
+	_, err = svc.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(bucket),
+		Key:           aws.String(largeKey),
+		Body:          bytes.NewReader(largePayload),
+		ContentLength: &largeSizeBytes,
+		ContentType:   aws.String("application/octet-stream"),
+	})
+	check("S3 PutObject 25 MB", err)
+	if err == nil {
+		headLarge, headLargeErr := svc.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(largeKey),
+		})
+		check("S3 HeadObject 25 MB content-length",
+			headLargeErr, headLargeErr == nil && headLarge.ContentLength != nil && *headLarge.ContentLength == largeSizeBytes)
+		svc.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: aws.String(largeKey)})
+	}
+
 	// cleanup
 	svc.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
 	svc.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: aws.String("copy-" + key)})
