@@ -108,7 +108,7 @@ public class FlociTest {
                 new KmsTests(),
                 new CognitoTests(),
                 new StepFunctionsTests(),
-                new ApiGatewayOpenApiImportTests()
+                new ApiGatewayOpenApiImportTests(),
                 new StepFunctionsJsonataTests(),
                 new StepFunctionsDynamoDbTests(),
                 new SesTests(),
