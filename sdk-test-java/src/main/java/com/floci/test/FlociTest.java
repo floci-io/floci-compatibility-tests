@@ -2,7 +2,9 @@ package com.floci.test;
 
 import com.floci.test.tests.*;
 
-import java.util.*;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 
 /**
  * Thin test runner for Floci SDK tests.
@@ -50,6 +52,11 @@ import java.util.*;
  *   <li>{@code cloudwatch-logs}
  *   <li>{@code cloudwatch-metrics}
  *   <li>{@code secretsmanager}
+ *   <li>{@code sfn-jsonata}
+ *   <li>{@code s3-large-object}
+ *   <li>{@code s3-range}
+ *   <li>{@code s3-virtual-host}
+ *   <li>{@code s3-presigned-post}
  *   <li>{@code ses}
  *   <li>{@code apigateway-openapi-import}
  * </ul>
@@ -67,6 +74,10 @@ public class FlociTest {
                 new S3Tests(),
                 new S3ObjectLockTests(),
                 new S3AdvancedTests(),
+                new S3LargeObjectTests(),
+                new S3RangeTests(),
+                new S3VirtualHostTests(),
+                new S3PresignedPostTests(),
                 new DynamoDbTests(),
                 new DynamoDbAdvancedTests(),
                 new DynamoDbLsiTests(),
@@ -97,8 +108,11 @@ public class FlociTest {
                 new KmsTests(),
                 new CognitoTests(),
                 new StepFunctionsTests(),
-                new SesTests(),
                 new ApiGatewayOpenApiImportTests()
+                new StepFunctionsJsonataTests(),
+                new StepFunctionsDynamoDbTests(),
+                new SesTests(),
+                new ApiGatewayAwsIntegrationTests()
         );
 
         Set<String> enabled = resolveEnabled(args);

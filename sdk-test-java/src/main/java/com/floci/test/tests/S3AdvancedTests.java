@@ -4,9 +4,39 @@ import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.*;
-
-import java.util.List;
+import software.amazon.awssdk.services.s3.model.AccessControlPolicy;
+import software.amazon.awssdk.services.s3.model.BucketLifecycleConfiguration;
+import software.amazon.awssdk.services.s3.model.CORSConfiguration;
+import software.amazon.awssdk.services.s3.model.CORSRule;
+import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
+import software.amazon.awssdk.services.s3.model.ExpirationStatus;
+import software.amazon.awssdk.services.s3.model.GetBucketAclResponse;
+import software.amazon.awssdk.services.s3.model.GetBucketCorsResponse;
+import software.amazon.awssdk.services.s3.model.GetBucketEncryptionResponse;
+import software.amazon.awssdk.services.s3.model.GetBucketLifecycleConfigurationResponse;
+import software.amazon.awssdk.services.s3.model.GetBucketPolicyResponse;
+import software.amazon.awssdk.services.s3.model.GetObjectAclResponse;
+import software.amazon.awssdk.services.s3.model.GetObjectAttributesRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectAttributesResponse;
+import software.amazon.awssdk.services.s3.model.Grant;
+import software.amazon.awssdk.services.s3.model.Grantee;
+import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
+import software.amazon.awssdk.services.s3.model.LifecycleExpiration;
+import software.amazon.awssdk.services.s3.model.LifecycleRule;
+import software.amazon.awssdk.services.s3.model.LifecycleRuleFilter;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
+import software.amazon.awssdk.services.s3.model.MetadataDirective;
+import software.amazon.awssdk.services.s3.model.ObjectAttributes;
+import software.amazon.awssdk.services.s3.model.Owner;
+import software.amazon.awssdk.services.s3.model.Permission;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.RestoreRequest;
+import software.amazon.awssdk.services.s3.model.ServerSideEncryption;
+import software.amazon.awssdk.services.s3.model.ServerSideEncryptionByDefault;
+import software.amazon.awssdk.services.s3.model.ServerSideEncryptionConfiguration;
+import software.amazon.awssdk.services.s3.model.ServerSideEncryptionRule;
+import software.amazon.awssdk.services.s3.model.StorageClass;
+import software.amazon.awssdk.services.s3.model.Type;
 
 public class S3AdvancedTests implements TestGroup {
 
@@ -139,17 +169,7 @@ public class S3AdvancedTests implements TestGroup {
                 ctx.check("S3 Select Object (Service implemented)", true);
             } catch (Exception e) { ctx.check("S3 Select Object", false, e); }
 
-            // 10. Virtual Host addressing
-            try {
-                // We simulate virtual host by making a request where we'd expect the filter to trigger.
-                // In a real SDK scenario, this would be bucket.localhost:4566.
-                // Here we can try to use a custom client or just rely on the fact that the filter logic is tested.
-                // We'll skip a full network-level virtual host test here as it requires DNS/Host setup,
-                // but the filter implementation is in place.
-                ctx.check("S3 Virtual Host Addressing (Filter implemented)", true);
-            } catch (Exception e) { ctx.check("S3 Virtual Host Addressing", false, e); }
-
-            // 11. PutObject with storage class and user metadata
+            // 10. PutObject with storage class and user metadata
             try {
                 s3.putObject(PutObjectRequest.builder()
                         .bucket(bucket).key("meta-file.txt")
@@ -164,7 +184,7 @@ public class S3AdvancedTests implements TestGroup {
                         && "test".equals(head.metadata().get("env")));
             } catch (Exception e) { ctx.check("S3 PutObject storage class", false, e); }
 
-            // 12. GetObjectAttributes
+            // 11. GetObjectAttributes
             try {
                 s3.putObject(PutObjectRequest.builder()
                         .bucket(bucket).key("attrs-file.txt").build(),
@@ -178,7 +198,7 @@ public class S3AdvancedTests implements TestGroup {
                         attrs.eTag() != null && attrs.objectSize() == 18L);
             } catch (Exception e) { ctx.check("S3 GetObjectAttributes", false, e); }
 
-            // 13. CopyObject with REPLACE metadata directive
+            // 12. CopyObject with REPLACE metadata directive
             try {
                 s3.putObject(PutObjectRequest.builder()
                         .bucket(bucket).key("original.txt")
@@ -196,6 +216,21 @@ public class S3AdvancedTests implements TestGroup {
                         "dest".equals(head.metadata().get("owner"))
                         && "application/json".equals(head.contentType()));
             } catch (Exception e) { ctx.check("S3 CopyObject REPLACE metadata", false, e); }
+
+            // 13. CopyObject with non-ASCII (multibyte) key
+            try {
+                String nonAsciiKey = "src/テスト画像.png";
+                String nonAsciiDst = "dst/テスト画像.png";
+                s3.putObject(b -> b.bucket(bucket).key(nonAsciiKey), RequestBody.fromString("non-ascii content"));
+                s3.copyObject(CopyObjectRequest.builder()
+                        .sourceBucket(bucket).sourceKey(nonAsciiKey)
+                        .destinationBucket(bucket).destinationKey(nonAsciiDst)
+                        .build());
+                software.amazon.awssdk.core.ResponseBytes<software.amazon.awssdk.services.s3.model.GetObjectResponse> resp =
+                        s3.getObjectAsBytes(b -> b.bucket(bucket).key(nonAsciiDst));
+                ctx.check("S3 CopyObject non-ASCII key",
+                        "non-ascii content".equals(resp.asUtf8String()));
+            } catch (Exception e) { ctx.check("S3 CopyObject non-ASCII key", false, e); }
 
             // Cleanup
             try {

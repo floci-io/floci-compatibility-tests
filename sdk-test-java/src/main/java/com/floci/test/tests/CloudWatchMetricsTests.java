@@ -10,7 +10,7 @@ import java.util.List;
 
 public class CloudWatchMetricsTests implements TestGroup {
 
-    private static final String NAMESPACE_A = "TestApp/CloudWatchMetricsTests";
+    private static final String NAMESPACE_A = "TestApp/CloudWatchMetricsTests/" + System.currentTimeMillis();
     private static final String NAMESPACE_B = "TestApp/OtherNamespace";
 
     @Override

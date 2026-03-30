@@ -594,6 +594,30 @@ def run_s3():
     except Exception as e:
         check("S3 DeleteBucketTagging", False, e)
 
+    non_ascii_src = "src/テスト画像.png"
+    non_ascii_dst = "dst/テスト画像.png"
+    try:
+        s3.put_object(Bucket=bucket, Key=non_ascii_src, Body=b"non-ascii content")
+        r = s3.copy_object(
+            CopySource={"Bucket": bucket, "Key": non_ascii_src},
+            Bucket=bucket, Key=non_ascii_dst,
+        )
+        check("S3 CopyObject non-ASCII key", bool(r.get("CopyObjectResult")))
+    except Exception as e:
+        check("S3 CopyObject non-ASCII key", False, e)
+
+    try:
+        r = s3.get_object(Bucket=bucket, Key=non_ascii_dst)
+        check("S3 GetObject non-ASCII copy", r["Body"].read() == b"non-ascii content")
+    except Exception as e:
+        check("S3 GetObject non-ASCII copy", False, e)
+
+    try:
+        s3.delete_object(Bucket=bucket, Key=non_ascii_src)
+        s3.delete_object(Bucket=bucket, Key=non_ascii_dst)
+    except Exception:
+        pass
+
     dest_bucket = "py-sdk-test-bucket-copy"
     dest_key = "copied-file.txt"
     try:
@@ -649,6 +673,26 @@ def run_s3():
         check("S3 Object deleted", len(r.get("Contents", [])) == 0)
     except Exception as e:
         check("S3 Object deleted", False, e)
+
+    # Large object upload (25 MB) — validates fix for upload size limit
+    large_key = "large-object-25mb.bin"
+    large_payload = b'\x00' * (25 * 1024 * 1024)
+    try:
+        s3.put_object(Bucket=bucket, Key=large_key, Body=large_payload, ContentType="application/octet-stream")
+        check("S3 PutObject 25 MB", True)
+    except Exception as e:
+        check("S3 PutObject 25 MB", False, e)
+
+    try:
+        r = s3.head_object(Bucket=bucket, Key=large_key)
+        check("S3 HeadObject 25 MB content-length", r["ContentLength"] == 25 * 1024 * 1024)
+    except Exception as e:
+        check("S3 HeadObject 25 MB content-length", False, e)
+
+    try:
+        s3.delete_object(Bucket=bucket, Key=large_key)
+    except Exception:
+        pass
 
     try:
         s3.delete_bucket(Bucket=eu_bucket)
@@ -1576,7 +1620,7 @@ def run_kinesis():
 def run_cloudwatch_metrics():
     print("--- CloudWatch Metrics Tests ---")
     cw = client("cloudwatch")
-    ns_a = "TestApp/PySdkMetricsTests"
+    ns_a = f"TestApp/PySdkMetricsTests/{int(time.time() * 1000)}"
     ns_b = "TestApp/OtherNamespace"
     now = datetime.datetime.now(datetime.timezone.utc)
 

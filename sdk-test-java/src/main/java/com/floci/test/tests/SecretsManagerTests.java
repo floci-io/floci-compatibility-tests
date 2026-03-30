@@ -254,7 +254,20 @@ public class SecretsManagerTests implements TestGroup {
                 ctx.check("SM CreateSecret duplicate", false, e);
             }
 
-            // 15. GetSecretValue non-existent — SecretsManagerException 400
+            // 15. GetRandomPassword — returns non-empty password with requested length
+            try {
+                GetRandomPasswordResponse resp = sm.getRandomPassword(GetRandomPasswordRequest.builder()
+                        .passwordLength(32L)
+                        .excludePunctuation(true)
+                        .build());
+                ctx.check("SM GetRandomPassword",
+                        resp.randomPassword() != null
+                        && resp.randomPassword().length() == 32);
+            } catch (Exception e) {
+                ctx.check("SM GetRandomPassword", false, e);
+            }
+
+            // 16. GetSecretValue non-existent — SecretsManagerException 400
             try {
                 sm.getSecretValue(GetSecretValueRequest.builder()
                         .secretId("non-existent-secret-" + System.currentTimeMillis())

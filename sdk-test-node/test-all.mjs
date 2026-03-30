@@ -342,10 +342,40 @@ async function testS3() {
   await tryOk("CopyObject", () =>
     s3.send(new CopyObjectCommand({ CopySource: `${bucket}/test.txt`, Bucket: bucket, Key: "test-copy.txt" })));
 
+  // CopyObject with non-ASCII (multibyte) key — regression: issue #93
+  const nonAsciiKey = "src/テスト画像.png";
+  const nonAsciiDst = "dst/テスト画像.png";
+  await tryOk("CopyObject non-ASCII key", async () => {
+    await s3.send(new PutObjectCommand({ Bucket: bucket, Key: nonAsciiKey, Body: Buffer.from("non-ascii content") }));
+    await s3.send(new CopyObjectCommand({ CopySource: `${bucket}/${encodeURIComponent(nonAsciiKey)}`, Bucket: bucket, Key: nonAsciiDst }));
+    const r = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: nonAsciiDst }));
+    const body = await r.Body.transformToString();
+    check("CopyObject non-ASCII content", body === "non-ascii content");
+    await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: nonAsciiKey }));
+    await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: nonAsciiDst }));
+  });
+
   await tryOk("ListObjectsV2", async () => {
     const r = await s3.send(new ListObjectsV2Command({ Bucket: bucket }));
     check("Objects listed", r.KeyCount >= 2);
   });
+
+  // Large object upload (25 MB) — validates fix for upload size limit
+  await tryOk("PutObject 25 MB", () =>
+    s3.send(new PutObjectCommand({
+      Bucket: bucket,
+      Key: "large-object-25mb.bin",
+      Body: Buffer.alloc(25 * 1024 * 1024),
+      ContentType: "application/octet-stream",
+    })));
+
+  await tryOk("HeadObject 25 MB content-length", async () => {
+    const r = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: "large-object-25mb.bin" }));
+    check("ContentLength is 25 MB", r.ContentLength === 25 * 1024 * 1024);
+  });
+
+  await tryOk("DeleteObject 25 MB", () =>
+    s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: "large-object-25mb.bin" })));
 
   await tryOk("DeleteObject", () =>
     s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: "test.txt" })));
