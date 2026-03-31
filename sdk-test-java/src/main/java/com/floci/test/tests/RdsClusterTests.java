@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.services.rds.RdsClient;
@@ -19,6 +20,7 @@ import java.util.List;
  * Creates a cluster, adds an instance to it, verifies connectivity,
  * then tears down in reverse order.
  */
+@FlociTestGroup
 public class RdsClusterTests implements TestGroup {
 
     @Override

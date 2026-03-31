@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.core.SdkBytes;
@@ -24,6 +25,7 @@ import java.util.Map;
  * <p>This exercises the full API Gateway dispatch chain:
  * HTTP client → execute-api → resource/method/integration lookup → Lambda → response.
  */
+@FlociTestGroup
 public class ApiGatewayExecuteTests implements TestGroup {
 
     @Override

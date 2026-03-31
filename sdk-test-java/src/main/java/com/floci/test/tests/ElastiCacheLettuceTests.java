@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import io.lettuce.core.ClientOptions;
@@ -24,6 +25,7 @@ import java.time.Duration;
  *   <li>IAM      — cluster created with transitEncryptionEnabled=true; proxy validates SigV4 token</li>
  * </ul>
  */
+@FlociTestGroup
 public class ElastiCacheLettuceTests implements TestGroup {
 
     @Override

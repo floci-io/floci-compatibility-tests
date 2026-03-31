@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.core.sync.RequestBody;
@@ -8,6 +9,7 @@ import software.amazon.awssdk.services.s3.model.*;
 
 import java.nio.charset.StandardCharsets;
 
+@FlociTestGroup
 public class S3Tests implements TestGroup {
 
     @Override

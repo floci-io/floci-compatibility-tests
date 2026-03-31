@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.services.sns.SnsClient;
@@ -9,6 +10,7 @@ import software.amazon.awssdk.services.sqs.model.*;
 
 import java.util.Map;
 
+@FlociTestGroup
 public class SnsTests implements TestGroup {
 
     @Override

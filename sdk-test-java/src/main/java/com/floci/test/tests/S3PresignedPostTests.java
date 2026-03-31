@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.core.sync.RequestBody;
@@ -25,6 +26,7 @@ import java.util.UUID;
  * (e.g. content-length-range) and signing fields. This group verifies the emulator
  * handles these requests correctly.
  */
+@FlociTestGroup
 public class S3PresignedPostTests implements TestGroup {
 
     @Override

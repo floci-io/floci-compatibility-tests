@@ -1,10 +1,12 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.services.apigatewayv2.ApiGatewayV2Client;
 import software.amazon.awssdk.services.apigatewayv2.model.*;
 
+@FlociTestGroup
 public class ApiGatewayV2Tests implements TestGroup {
 
     @Override

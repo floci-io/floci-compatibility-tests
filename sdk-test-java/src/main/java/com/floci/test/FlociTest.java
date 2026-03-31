@@ -1,7 +1,8 @@
 package com.floci.test;
 
-import com.floci.test.tests.*;
+import org.reflections.Reflections;
 
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -24,101 +25,28 @@ import java.util.Set;
  *   FLOCI_TESTS=sqs,s3 java -cp ... com.floci.test.FlociTest
  * </pre>
  *
- * <p>Available group names:
- * <ul>
- *   <li>{@code sqs}
- *   <li>{@code s3}
- *   <li>{@code s3-object-lock}
- *   <li>{@code ssm}
- *   <li>{@code dynamodb}
- *   <li>{@code dynamodb-advanced}
- *   <li>{@code dynamodb-streams}
- *   <li>{@code lambda}
- *   <li>{@code lambda-invoke}
- *   <li>{@code lambda-warmpool}
- *   <li>{@code lambda-concurrent}
- *   <li>{@code apigateway}
- *   <li>{@code s3-notifications}
- *   <li>{@code iam}
- *   <li>{@code sts}
- *   <li>{@code iam-perf}
- *   <li>{@code cognito}
- *   <li>{@code cognito-oauth}
- *   <li>{@code elasticache}
- *   <li>{@code elasticache-mgmt}
- *   <li>{@code elasticache-lettuce}
- *   <li>{@code rds-mgmt}
- *   <li>{@code rds-cluster}
- *   <li>{@code rds-iam}
- *   <li>{@code eventbridge}
- *   <li>{@code cloudwatch-logs}
- *   <li>{@code cloudwatch-metrics}
- *   <li>{@code secretsmanager}
- *   <li>{@code sfn-jsonata}
- *   <li>{@code s3-large-object}
- *   <li>{@code s3-range}
- *   <li>{@code s3-virtual-host}
- *   <li>{@code s3-presigned-post}
- *   <li>{@code ses}
- *   <li>{@code apigateway-openapi-import}
- *   <li>{@code opensearch}
- * </ul>
+ * <p>Available group names are determined by the {@link TestGroup#name()} of every class
+ * annotated with {@link FlociTestGroup}. See the {@code tests/} package for the full list.
  */
 public class FlociTest {
 
     public static void main(String[] args) {
         System.out.println("=== Floci SDK Test (AWS SDK v2.31.8) ===\n");
 
-        List<TestGroup> allGroups = List.of(
-                new SsmTests(),
-                new SqsTests(),
-                new SqsLambdaEsmTests(),
-                new SnsTests(),
-                new S3Tests(),
-                new S3ObjectLockTests(),
-                new S3AdvancedTests(),
-                new S3LargeObjectTests(),
-                new S3RangeTests(),
-                new S3VirtualHostTests(),
-                new S3PresignedPostTests(),
-                new DynamoDbTests(),
-                new DynamoDbAdvancedTests(),
-                new DynamoDbLsiTests(),
-                new DynamoDbStreamsTests(),
-                new LambdaTests(),
-                new LambdaInvokeTests(),
-                new LambdaHttpTests(),
-                new LambdaWarmPoolTests(),
-                new LambdaConcurrentTests(),
-                new ApiGatewayTests(),
-                new ApiGatewayExecuteTests(),
-                new ApiGatewayV2Tests(),
-                new S3NotificationTests(),
-                new IamTests(),
-                new StsTests(),
-                new IamPerformanceTests(),
-                new ElastiCacheTests(),
-                new ElastiCacheManagementTests(),
-                new ElastiCacheLettuceTests(),
-                new RdsManagementTests(),
-                new RdsClusterTests(),
-                new RdsIamTests(),
-                new EventBridgeTests(),
-                new KinesisTests(),
-                new CloudWatchLogsTests(),
-                new CloudWatchMetricsTests(),
-                new SecretsManagerTests(),
-                new KmsTests(),
-                new CognitoTests(),
-                new CognitoOAuthTests(),
-                new StepFunctionsTests(),
-                new ApiGatewayOpenApiImportTests(),
-                new StepFunctionsJsonataTests(),
-                new StepFunctionsDynamoDbTests(),
-                new SesTests(),
-                new OpenSearchTests(),
-                new ApiGatewayAwsIntegrationTests()
-        );
+        List<TestGroup> allGroups = new Reflections("com.floci.test.tests")
+                .getTypesAnnotatedWith(FlociTestGroup.class)
+                .stream()
+                .map(c -> {
+                    try {
+                        return (TestGroup) c.getDeclaredConstructor().newInstance();
+                    } catch (Exception e) {
+                        throw new RuntimeException("Failed to instantiate " + c.getName(), e);
+                    }
+                })
+                .sorted(Comparator
+                        .comparingInt((TestGroup g) -> effectiveOrder(g.getClass().getAnnotation(FlociTestGroup.class)))
+                        .thenComparing(TestGroup::name))
+                .toList();
 
         Set<String> enabled = resolveEnabled(args);
 //        Set<String> enabled = Set.of("apigateway");
@@ -138,6 +66,10 @@ public class FlociTest {
         if (ctx.getFailed() > 0) {
             System.exit(1);
         }
+    }
+
+    private static int effectiveOrder(FlociTestGroup ann) {
+        return ann.order() >= 0 ? ann.order() : ann.value();
     }
 
     /**

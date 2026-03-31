@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.core.sync.RequestBody;
@@ -19,6 +20,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectResponse;
  * to send requests with the bucket name in the {@code Host} header
  * (e.g., {@code Host: bucket.localhost:4566}) instead of the URL path.
  */
+@FlociTestGroup
 public class S3VirtualHostTests implements TestGroup {
 
     @Override

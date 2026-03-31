@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.services.ses.SesClient;
@@ -7,6 +8,7 @@ import software.amazon.awssdk.services.ses.model.*;
 
 import java.util.List;
 
+@FlociTestGroup
 public class SesTests implements TestGroup {
 
     @Override

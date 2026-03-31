@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.services.sts.StsClient;
@@ -19,6 +20,7 @@ import software.amazon.awssdk.services.sts.model.GetSessionTokenRequest;
 import software.amazon.awssdk.services.sts.model.GetSessionTokenResponse;
 import software.amazon.awssdk.services.sts.model.StsException;
 
+@FlociTestGroup
 public class StsTests implements TestGroup {
 
     @Override

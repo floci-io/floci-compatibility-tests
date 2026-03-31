@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.services.iam.IamClient;
@@ -25,6 +26,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * <p>Run with: {@code FLOCI_TESTS=iam-perf mvn exec:java}
  */
+@FlociTestGroup
 public class IamPerformanceTests implements TestGroup {
 
     private static final int CONCURRENT_USERS = 20;

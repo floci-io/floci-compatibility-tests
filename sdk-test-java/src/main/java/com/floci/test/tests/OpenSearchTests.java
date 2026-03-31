@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.services.opensearch.OpenSearchClient;
@@ -8,6 +9,7 @@ import software.amazon.awssdk.services.opensearch.model.*;
 import java.util.List;
 import java.util.Map;
 
+@FlociTestGroup
 public class OpenSearchTests implements TestGroup {
 
     @Override

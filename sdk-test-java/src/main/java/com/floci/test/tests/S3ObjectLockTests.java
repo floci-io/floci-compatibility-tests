@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.core.sync.RequestBody;
@@ -9,6 +10,7 @@ import software.amazon.awssdk.services.s3.model.*;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
+@FlociTestGroup
 public class S3ObjectLockTests implements TestGroup {
 
     @Override

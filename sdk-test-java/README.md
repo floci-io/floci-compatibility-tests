@@ -47,6 +47,30 @@ Runs 507 assertions across 37 test groups against a live Floci instance — no m
 | `cognito-oauth` | Resource server CRUD, confidential clients, `/oauth2/token`, OIDC discovery, JWKS/JWT verification |
 | `stepfunctions` | State machines, executions, history |
 
+## Adding a New Test Group
+
+1. Create a class in `src/main/java/com/floci/test/tests/` that implements `TestGroup`.
+2. Annotate it with `@FlociTestGroup` — the build will auto-register it, no other files need to change.
+
+```java
+@FlociTestGroup
+public class MyServiceTests implements TestGroup {
+
+    @Override
+    public String name() { return "myservice"; }
+
+    @Override
+    public void run(TestContext ctx) {
+        // ...
+        ctx.check("MyService CreateFoo", response.fooId() != null);
+    }
+}
+```
+
+Use `@FlociTestGroup(order = N)` to control execution order relative to other groups (lower = earlier). Groups with the same order sort alphabetically.
+
+At compile time, `FlociTestGroupProcessor` scans all `@FlociTestGroup`-annotated classes and generates `target/generated-sources/annotations/com/floci/test/TestGroupRegistry.java`. `FlociTest` loads groups from that registry — the hardcoded list in `FlociTest.java` no longer exists.
+
 ## Requirements
 
 - Java 17+

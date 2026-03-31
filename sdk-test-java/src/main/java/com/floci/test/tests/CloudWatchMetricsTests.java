@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.services.cloudwatch.CloudWatchClient;
@@ -8,6 +9,7 @@ import software.amazon.awssdk.services.cloudwatch.model.*;
 import java.time.Instant;
 import java.util.List;
 
+@FlociTestGroup
 public class CloudWatchMetricsTests implements TestGroup {
 
     private static final String NAMESPACE_A = "TestApp/CloudWatchMetricsTests/" + System.currentTimeMillis();

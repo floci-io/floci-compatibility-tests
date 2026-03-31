@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
@@ -8,6 +9,7 @@ import software.amazon.awssdk.services.dynamodb.streams.DynamoDbStreamsClient;
 
 import java.util.Map;
 
+@FlociTestGroup
 public class DynamoDbStreamsTests implements TestGroup {
 
     private static final String SHARD_ID = "shardId-0000000001-00000000001";

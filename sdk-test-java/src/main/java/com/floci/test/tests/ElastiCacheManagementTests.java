@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.services.elasticache.ElastiCacheClient;
@@ -16,6 +17,7 @@ import java.nio.charset.StandardCharsets;
  * Uses the AWS SDK ElastiCacheClient (Query protocol / XML) for all management-plane
  * calls; raw sockets only for data-plane AUTH protocol testing.
  */
+@FlociTestGroup
 public class ElastiCacheManagementTests implements TestGroup {
 
     @Override

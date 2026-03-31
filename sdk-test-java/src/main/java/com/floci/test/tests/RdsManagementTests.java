@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.services.rds.RdsClient;
@@ -23,6 +24,7 @@ import java.util.List;
  *   <li>Real SQL: CREATE TABLE → INSERT → SELECT → UPDATE → DELETE → DROP
  * </ul>
  */
+@FlociTestGroup
 public class RdsManagementTests implements TestGroup {
 
     @Override

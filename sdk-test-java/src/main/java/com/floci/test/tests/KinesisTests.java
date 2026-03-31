@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.core.SdkBytes;
@@ -9,6 +10,7 @@ import software.amazon.awssdk.services.kinesis.model.*;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+@FlociTestGroup
 public class KinesisTests implements TestGroup {
 
     @Override

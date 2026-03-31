@@ -1,10 +1,12 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.services.sfn.SfnClient;
 import software.amazon.awssdk.services.sfn.model.*;
 
+@FlociTestGroup
 public class StepFunctionsTests implements TestGroup {
 
     @Override

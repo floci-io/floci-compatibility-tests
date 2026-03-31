@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.core.SdkBytes;
@@ -16,6 +17,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Map;
 
+@FlociTestGroup
 public class ApiGatewayTests implements TestGroup {
 
     @Override

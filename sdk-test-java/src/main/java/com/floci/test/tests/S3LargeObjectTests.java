@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.core.sync.RequestBody;
@@ -10,6 +11,7 @@ import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
  * Validates large S3 object uploads (25 MB).
  * Protects against regressions of the upload-size limit fix.
  */
+@FlociTestGroup
 public class S3LargeObjectTests implements TestGroup {
 
     private static final int SIZE_MB = 25;

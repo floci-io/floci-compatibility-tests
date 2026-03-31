@@ -2,6 +2,7 @@ package com.floci.test.tests;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.services.cognitoidentityprovider.CognitoIdentityProviderClient;
@@ -41,6 +42,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+@FlociTestGroup
 public class CognitoOAuthTests implements TestGroup {
 
     private static final ObjectMapper JSON = new ObjectMapper();

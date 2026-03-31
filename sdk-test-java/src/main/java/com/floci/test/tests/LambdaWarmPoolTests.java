@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.core.SdkBytes;
@@ -10,6 +11,7 @@ import software.amazon.awssdk.services.lambda.model.Runtime;
 
 import java.time.Duration;
 
+@FlociTestGroup
 public class LambdaWarmPoolTests implements TestGroup {
 
     @Override

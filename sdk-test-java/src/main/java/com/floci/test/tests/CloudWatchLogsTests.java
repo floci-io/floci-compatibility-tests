@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.services.cloudwatchlogs.CloudWatchLogsClient;
@@ -8,6 +9,7 @@ import software.amazon.awssdk.services.cloudwatchlogs.model.*;
 import java.util.List;
 import java.util.Map;
 
+@FlociTestGroup
 public class CloudWatchLogsTests implements TestGroup {
 
     private static final String GROUP_NAME = "/test/cloudwatch-logs-group";

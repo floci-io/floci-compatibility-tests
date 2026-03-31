@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.core.SdkBytes;
@@ -19,6 +20,7 @@ import java.time.Duration;
  * posting to the Lambda Invoke REST endpoint:
  * <pre>POST /2015-03-31/functions/{name}/invocations</pre>
  */
+@FlociTestGroup
 public class LambdaHttpTests implements TestGroup {
 
     @Override

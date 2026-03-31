@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.services.rds.RdsClient;
@@ -21,6 +22,7 @@ import java.util.List;
  * works as a JDBC password, then exercises real SQL (CREATE TABLE → INSERT →
  * SELECT → UPDATE → DELETE → DROP) through the IAM-authenticated connection.
  */
+@FlociTestGroup
 public class RdsIamTests implements TestGroup {
 
     @Override

@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.core.SdkBytes;
@@ -27,6 +28,7 @@ import java.time.Duration;
  *   <li>Delete ESM + cleanup.
  * </ol>
  */
+@FlociTestGroup
 public class SqsLambdaEsmTests implements TestGroup {
 
     private static final String ACCOUNT_ID = "000000000000";

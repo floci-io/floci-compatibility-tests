@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.services.eventbridge.EventBridgeClient;
@@ -14,6 +15,7 @@ import software.amazon.awssdk.services.sqs.model.ReceiveMessageResponse;
 
 import java.util.List;
 
+@FlociTestGroup
 public class EventBridgeTests implements TestGroup {
 
     @Override

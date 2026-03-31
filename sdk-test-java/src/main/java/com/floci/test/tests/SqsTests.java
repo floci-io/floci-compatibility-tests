@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.services.sqs.SqsClient;
@@ -8,6 +9,7 @@ import software.amazon.awssdk.services.sqs.model.*;
 import java.util.ArrayList;
 import java.util.List;
 
+@FlociTestGroup
 public class SqsTests implements TestGroup {
 
     @Override

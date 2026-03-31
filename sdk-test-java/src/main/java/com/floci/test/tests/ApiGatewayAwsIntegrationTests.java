@@ -1,5 +1,6 @@
 package com.floci.test.tests;
 
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.services.apigateway.ApiGatewayClient;
@@ -20,6 +21,7 @@ import java.util.Map;
  * Compatibility tests for API Gateway AWS (non-proxy) integration type.
  * Tests APIGW -> SFN and APIGW -> DynamoDB via VTL mapping templates.
  */
+@FlociTestGroup
 public class ApiGatewayAwsIntegrationTests implements TestGroup {
 
     @Override

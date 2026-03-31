@@ -2,6 +2,7 @@ package com.floci.test.tests;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.floci.test.FlociTestGroup;
 import com.floci.test.TestContext;
 import com.floci.test.TestGroup;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
@@ -15,6 +16,7 @@ import software.amazon.awssdk.services.sfn.model.*;
 import java.util.List;
 import java.util.Map;
 
+@FlociTestGroup
 public class StepFunctionsDynamoDbTests implements TestGroup {
 
     private static final String ROLE_ARN = System.getenv("SFN_ROLE_ARN") != null
