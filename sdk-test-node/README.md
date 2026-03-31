@@ -19,6 +19,7 @@ Compatibility tests for [Floci](https://github.com/hectorvent/floci) using the *
 | `kinesis` | Streams, shards, PutRecord/GetRecords |
 | `cloudwatch` | PutMetricData, ListMetrics, GetMetricStatistics, alarms |
 | `cognito` | User pools, clients, AdminCreateUser, InitiateAuth, GetUser |
+| `cognito-oauth` | Resource server CRUD, confidential clients, `/oauth2/token`, OIDC discovery, JWKS/JWT verification |
 
 ## Requirements
 

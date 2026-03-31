@@ -92,7 +92,7 @@ AWS credentials are always `test` / `test` / `us-east-1` — the emulator accept
 
 ### Java SDK (`sdk-test-java`)
 
-507 assertions across 37 test groups:
+537 assertions across 38 test groups::
 
 | Group flag | Description |
 |---|---|
@@ -132,6 +132,7 @@ AWS credentials are always `test` / `test` / `us-east-1` — the emulator accept
 | `secretsmanager` | Create/get/put/list/rotate/delete secrets, versioning, tags |
 | `kms` | Keys, aliases, encrypt/decrypt, data keys, sign/verify, re-encrypt |
 | `cognito` | User pools, clients, AdminCreateUser, InitiateAuth, GetUser |
+| `cognito-oauth` | Resource server CRUD, confidential clients, `/oauth2/token`, OIDC discovery, JWKS/JWT verification |
 | `stepfunctions` | State machines, executions, history |
 
 Run a subset by passing group names:

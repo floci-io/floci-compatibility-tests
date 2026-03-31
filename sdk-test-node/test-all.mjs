@@ -1,7 +1,7 @@
 /**
  * Floci Node.js SDK test suite — @aws-sdk/client-* v3
  * Covers: SSM, SQS, SNS, S3, DynamoDB, Lambda, IAM, STS, Secrets Manager, KMS, Kinesis,
- *         CloudWatch Metrics, Cognito
+ *         CloudWatch Metrics, Cognito, Cognito OAuth
  *
  * Usage:
  *   node test-all.mjs [suite1,suite2,...]
@@ -20,7 +20,8 @@ import { SecretsManagerClient, CreateSecretCommand, GetSecretValueCommand, Updat
 import { KMSClient, CreateKeyCommand, ListKeysCommand, DescribeKeyCommand, EncryptCommand, DecryptCommand, GenerateDataKeyCommand } from "@aws-sdk/client-kms";
 import { KinesisClient, CreateStreamCommand, DescribeStreamCommand, PutRecordCommand, GetShardIteratorCommand, GetRecordsCommand, DeleteStreamCommand, ListStreamsCommand } from "@aws-sdk/client-kinesis";
 import { CloudWatchClient, PutMetricDataCommand, GetMetricStatisticsCommand, ListMetricsCommand, PutMetricAlarmCommand, DescribeAlarmsCommand, DeleteAlarmsCommand } from "@aws-sdk/client-cloudwatch";
-import { CognitoIdentityProviderClient, CreateUserPoolCommand, CreateUserPoolClientCommand, AdminCreateUserCommand, AdminSetUserPasswordCommand, InitiateAuthCommand, RespondToAuthChallengeCommand, SignUpCommand, ConfirmSignUpCommand, AdminGetUserCommand, ListUsersCommand, DeleteUserPoolCommand } from "@aws-sdk/client-cognito-identity-provider";
+import { createPublicKey, createVerify } from "node:crypto";
+import { CognitoIdentityProviderClient, CreateUserPoolCommand, CreateUserPoolClientCommand, CreateResourceServerCommand, DescribeResourceServerCommand, ListResourceServersCommand, UpdateResourceServerCommand, DeleteResourceServerCommand, DeleteUserPoolClientCommand, AdminCreateUserCommand, AdminSetUserPasswordCommand, InitiateAuthCommand, RespondToAuthChallengeCommand, SignUpCommand, ConfirmSignUpCommand, AdminGetUserCommand, ListUsersCommand, DeleteUserPoolCommand } from "@aws-sdk/client-cognito-identity-provider";
 
 const ENDPOINT = process.env.FLOCI_ENDPOINT || "http://localhost:4566";
 const REGION = "us-east-1";
@@ -71,6 +72,140 @@ async function tryFail(name, fn) {
 
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
+}
+
+function decodeJwtPart(token, index) {
+  const parts = token.split(".");
+  if (parts.length !== 3) {
+    throw new Error("JWT must have exactly 3 parts");
+  }
+  return JSON.parse(Buffer.from(parts[index], "base64url").toString("utf8"));
+}
+
+function scopeContains(scopeClaim, expectedScope) {
+  return typeof scopeClaim === "string"
+    && scopeClaim.split(/\s+/).some(scope => scope === expectedScope);
+}
+
+function isPublicClientRejectionError(error) {
+  const message = (error?.message || "").toLowerCase();
+  return message.includes("secret")
+    || message.includes("client_credentials")
+    || message.includes("public client")
+    || message.includes("confidential client");
+}
+
+async function readJsonResponse(response) {
+  const body = await response.text();
+  let json = {};
+  if (body) {
+    try {
+      json = JSON.parse(body);
+    } catch {
+      json = {};
+    }
+  }
+  return { status: response.status, body, json };
+}
+
+async function discoverOpenIdConfiguration(poolId) {
+  const candidates = [
+    `${ENDPOINT}/${poolId}/.well-known/openid-configuration`,
+    `${ENDPOINT}/.well-known/openid-configuration`,
+  ];
+  const failures = [];
+
+  for (const candidate of candidates) {
+    const response = await fetch(candidate);
+    if (!response.ok) {
+      failures.push(`${candidate} -> HTTP ${response.status}`);
+      continue;
+    }
+
+    const json = await response.json();
+    if (!json.issuer || !json.token_endpoint || !json.jwks_uri) {
+      failures.push(`${candidate} -> missing issuer/token_endpoint/jwks_uri`);
+      continue;
+    }
+
+    return {
+      discoveryUrl: candidate,
+      issuer: json.issuer,
+      tokenEndpoint: new URL(json.token_endpoint, candidate).toString(),
+      jwksUri: new URL(json.jwks_uri, candidate).toString(),
+    };
+  }
+
+  throw new Error(`No valid OIDC discovery document found: ${failures.join("; ")}`);
+}
+
+async function postOAuthForm(url, form, headers = {}) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      ...headers,
+    },
+    body: new URLSearchParams(form),
+  });
+  return readJsonResponse(response);
+}
+
+async function requestConfidentialClientToken(tokenEndpoint, clientId, clientSecret, scope) {
+  const basic = Buffer.from(`${clientId}:${clientSecret}`, "utf8").toString("base64");
+  return postOAuthForm(tokenEndpoint, {
+    grant_type: "client_credentials",
+    scope,
+  }, {
+    Authorization: `Basic ${basic}`,
+  });
+}
+
+async function requestPublicClientToken(tokenEndpoint, clientId, scope) {
+  return postOAuthForm(tokenEndpoint, {
+    grant_type: "client_credentials",
+    client_id: clientId,
+    scope,
+  });
+}
+
+async function fetchJwk(jwksUri, kid) {
+  const response = await fetch(jwksUri);
+  if (!response.ok) {
+    throw new Error(`JWKS request failed with HTTP ${response.status}`);
+  }
+
+  const json = await response.json();
+  if (!Array.isArray(json.keys)) {
+    throw new Error("JWKS keys array missing");
+  }
+
+  const key = json.keys.find(item => item.kid === kid);
+  if (!key) {
+    throw new Error(`No JWK found for kid ${kid}`);
+  }
+
+  return key;
+}
+
+function verifyRs256(token, jwk) {
+  if (jwk.kty !== "RSA") {
+    throw new Error(`Expected RSA JWK but got ${jwk.kty}`);
+  }
+
+  const parts = token.split(".");
+  if (parts.length !== 3) {
+    throw new Error("JWT must have exactly 3 parts");
+  }
+
+  const publicKey = createPublicKey({
+    key: { kty: "RSA", n: jwk.n, e: jwk.e },
+    format: "jwk",
+  });
+  const verifier = createVerify("RSA-SHA256");
+  verifier.update(`${parts[0]}.${parts[1]}`);
+  verifier.end();
+  return verifier.verify(publicKey, Buffer.from(parts[2], "base64url"));
 }
 
 // ─────────────────────────── SSM ───────────────────────────
@@ -1000,6 +1135,241 @@ async function testCognito() {
     cognito.send(new DeleteUserPoolCommand({ UserPoolId: poolId })));
 }
 
+// ─────────────────────────── Cognito OAuth ───────────────────────────
+async function testCognitoOAuth() {
+  console.log("\n=== Cognito OAuth ===");
+  const cognito = makeClient(CognitoIdentityProviderClient);
+
+  const suffix = `${Date.now()}`;
+  const resourceServerId = `https://compat.floci.test/resource/${suffix}`;
+  const readScope = `${resourceServerId}/read`;
+  const adminScope = `${resourceServerId}/admin`;
+
+  let poolId = null;
+  let confidentialClientId = null;
+  let confidentialClientSecret = null;
+  let publicClientId = null;
+  let publicClientRejectedAtCreate = false;
+  let discovery = null;
+  let accessToken = null;
+
+  try {
+    const poolResp = await cognito.send(new CreateUserPoolCommand({
+      PoolName: `floci-node-oauth-pool-${suffix}`,
+    }));
+    poolId = poolResp.UserPool?.Id;
+    check("Cognito OAuth CreateUserPool", !!poolId);
+  } catch (e) {
+    check("Cognito OAuth CreateUserPool", false, e.message || e.name);
+    return;
+  }
+
+  try {
+    const createResp = await cognito.send(new CreateResourceServerCommand({
+      UserPoolId: poolId,
+      Identifier: resourceServerId,
+      Name: "compat-resource-server",
+      Scopes: [
+        { ScopeName: "read", ScopeDescription: "Read access" },
+        { ScopeName: "write", ScopeDescription: "Write access" },
+      ],
+    }));
+    check("Cognito OAuth CreateResourceServer",
+      createResp.ResourceServer?.Identifier === resourceServerId
+        && Array.isArray(createResp.ResourceServer?.Scopes)
+        && createResp.ResourceServer.Scopes.length === 2);
+  } catch (e) {
+    check("Cognito OAuth CreateResourceServer", false, e.message || e.name);
+    await tryOk("Cognito OAuth DeleteUserPool", () =>
+      cognito.send(new DeleteUserPoolCommand({ UserPoolId: poolId })));
+    return;
+  }
+
+  await tryOk("Cognito OAuth DescribeResourceServer", async () => {
+    const resp = await cognito.send(new DescribeResourceServerCommand({
+      UserPoolId: poolId,
+      Identifier: resourceServerId,
+    }));
+    const scopes = resp.ResourceServer?.Scopes?.map(scope => scope.ScopeName) || [];
+    check("Cognito OAuth DescribeResourceServer values",
+      resp.ResourceServer?.Name === "compat-resource-server"
+        && scopes.includes("read")
+        && scopes.includes("write"));
+  });
+
+  await tryOk("Cognito OAuth ListResourceServers", async () => {
+    const resp = await cognito.send(new ListResourceServersCommand({
+      UserPoolId: poolId,
+      MaxResults: 60,
+    }));
+    check("Cognito OAuth ListResourceServers values",
+      resp.ResourceServers?.some(server => server.Identifier === resourceServerId));
+  });
+
+  await tryOk("Cognito OAuth UpdateResourceServer", async () => {
+    await cognito.send(new UpdateResourceServerCommand({
+      UserPoolId: poolId,
+      Identifier: resourceServerId,
+      Name: "compat-resource-server-updated",
+      Scopes: [
+        { ScopeName: "read", ScopeDescription: "Read access updated" },
+        { ScopeName: "admin", ScopeDescription: "Admin access" },
+      ],
+    }));
+
+    const resp = await cognito.send(new DescribeResourceServerCommand({
+      UserPoolId: poolId,
+      Identifier: resourceServerId,
+    }));
+    const scopes = resp.ResourceServer?.Scopes?.map(scope => scope.ScopeName) || [];
+    check("Cognito OAuth UpdateResourceServer values",
+      resp.ResourceServer?.Name === "compat-resource-server-updated"
+        && scopes.includes("read")
+        && scopes.includes("admin")
+        && !scopes.includes("write"));
+  });
+
+  try {
+    const resp = await cognito.send(new CreateUserPoolClientCommand({
+      UserPoolId: poolId,
+      ClientName: `compat-confidential-client-${suffix}`,
+      GenerateSecret: true,
+      AllowedOAuthFlowsUserPoolClient: true,
+      AllowedOAuthFlows: ["client_credentials"],
+      AllowedOAuthScopes: [readScope, adminScope],
+    }));
+    confidentialClientId = resp.UserPoolClient?.ClientId;
+    confidentialClientSecret = resp.UserPoolClient?.ClientSecret;
+    check("Cognito OAuth Create confidential client",
+      !!confidentialClientId && !!confidentialClientSecret);
+  } catch (e) {
+    check("Cognito OAuth Create confidential client", false, e.message || e.name);
+  }
+
+  try {
+    const resp = await cognito.send(new CreateUserPoolClientCommand({
+      UserPoolId: poolId,
+      ClientName: `compat-public-client-${suffix}`,
+      AllowedOAuthFlowsUserPoolClient: true,
+      AllowedOAuthFlows: ["client_credentials"],
+      AllowedOAuthScopes: [readScope, adminScope],
+    }));
+    publicClientId = resp.UserPoolClient?.ClientId;
+    check("Cognito OAuth Create public client",
+      !!publicClientId && !resp.UserPoolClient?.ClientSecret);
+  } catch (e) {
+    publicClientRejectedAtCreate = isPublicClientRejectionError(e);
+    check("Cognito OAuth Public client rejected", publicClientRejectedAtCreate, publicClientRejectedAtCreate ? null : (e.message || e.name));
+  }
+
+  await tryOk("Cognito OAuth OIDC discovery", async () => {
+    discovery = await discoverOpenIdConfiguration(poolId);
+    check("Cognito OAuth OIDC token endpoint", discovery.tokenEndpoint.endsWith("/oauth2/token"));
+    check("Cognito OAuth OIDC JWKS URI", discovery.jwksUri.endsWith("/.well-known/jwks.json"));
+    check("Cognito OAuth OIDC issuer", !!discovery.issuer);
+  });
+
+  if (discovery && confidentialClientId && confidentialClientSecret) {
+    await tryOk("Cognito OAuth /oauth2/token happy path", async () => {
+      const resp = await requestConfidentialClientToken(
+        discovery.tokenEndpoint,
+        confidentialClientId,
+        confidentialClientSecret,
+        readScope,
+      );
+      check("Cognito OAuth /oauth2/token status 200", resp.status === 200, resp.body);
+      accessToken = resp.json.access_token;
+      check("Cognito OAuth access token returned", !!accessToken, resp.body);
+      check("Cognito OAuth token type Bearer", resp.json.token_type?.toLowerCase() === "bearer", resp.body);
+      check("Cognito OAuth expires_in present", Number(resp.json.expires_in) > 0, resp.body);
+      check("Cognito OAuth granted scope", !resp.json.scope || scopeContains(resp.json.scope, readScope), resp.body);
+    });
+  }
+
+  if (accessToken && discovery) {
+    await tryOk("Cognito OAuth JWT inspection", async () => {
+      const header = decodeJwtPart(accessToken, 0);
+      const payload = decodeJwtPart(accessToken, 1);
+      check("Cognito OAuth JWT alg is RS256", header.alg === "RS256");
+      check("Cognito OAuth JWT kid present", !!header.kid);
+      check("Cognito OAuth JWT issuer matches discovery", payload.iss === discovery.issuer);
+      check("Cognito OAuth JWT client_id matches app client", payload.client_id === confidentialClientId);
+      check("Cognito OAuth JWT scope claim", scopeContains(payload.scope, readScope));
+    });
+
+    await tryOk("Cognito OAuth RS256 JWT verification against JWKS", async () => {
+      const kid = decodeJwtPart(accessToken, 0).kid;
+      const jwk = await fetchJwk(discovery.jwksUri, kid);
+      check("Cognito OAuth RS256 JWT verification against JWKS",
+        verifyRs256(accessToken, jwk));
+    });
+  }
+
+  if (!publicClientRejectedAtCreate && discovery && publicClientId) {
+    await tryOk("Cognito OAuth Public client rejected", async () => {
+      const resp = await requestPublicClientToken(
+        discovery.tokenEndpoint,
+        publicClientId,
+        readScope,
+      );
+      check("Cognito OAuth Public client rejected status",
+        resp.status >= 400 && resp.status < 500, resp.body);
+      check("Cognito OAuth Public client rejection reason",
+        ["invalid_client", "unauthorized_client"].includes(resp.json.error), resp.body);
+    });
+  }
+
+  if (discovery && confidentialClientId && confidentialClientSecret) {
+    await tryOk("Cognito OAuth unknown scope rejected", async () => {
+      const resp = await requestConfidentialClientToken(
+        discovery.tokenEndpoint,
+        confidentialClientId,
+        confidentialClientSecret,
+        `${resourceServerId}/unknown`,
+      );
+      check("Cognito OAuth unknown scope status 400", resp.status === 400, resp.body);
+      check("Cognito OAuth unknown scope error", resp.json.error === "invalid_scope", resp.body);
+    });
+  }
+
+  if (confidentialClientId) {
+    await tryOk("Cognito OAuth Delete confidential client", () =>
+      cognito.send(new DeleteUserPoolClientCommand({
+        UserPoolId: poolId,
+        ClientId: confidentialClientId,
+      })));
+    confidentialClientId = null;
+  }
+
+  if (publicClientId) {
+    await tryOk("Cognito OAuth Delete public client", () =>
+      cognito.send(new DeleteUserPoolClientCommand({
+        UserPoolId: poolId,
+        ClientId: publicClientId,
+      })));
+    publicClientId = null;
+  }
+
+  await tryOk("Cognito OAuth DeleteResourceServer", async () => {
+    await cognito.send(new DeleteResourceServerCommand({
+      UserPoolId: poolId,
+      Identifier: resourceServerId,
+    }));
+    try {
+      await cognito.send(new DescribeResourceServerCommand({
+        UserPoolId: poolId,
+        Identifier: resourceServerId,
+      }));
+      check("Cognito OAuth DescribeResourceServer after delete", false, "Expected missing resource server");
+    } catch {
+      check("Cognito OAuth DescribeResourceServer after delete", true);
+    }
+  });
+
+  await tryOk("Cognito OAuth DeleteUserPool", () =>
+    cognito.send(new DeleteUserPoolCommand({ UserPoolId: poolId })));
+}
+
 // ─────────────────────────── Runner ───────────────────────────
 const ALL_SUITES = {
   ssm: testSsm,
@@ -1015,6 +1385,7 @@ const ALL_SUITES = {
   kinesis: testKinesis,
   cloudwatch: testCloudWatch,
   cognito: testCognito,
+  "cognito-oauth": testCognitoOAuth,
 };
 
 async function main() {

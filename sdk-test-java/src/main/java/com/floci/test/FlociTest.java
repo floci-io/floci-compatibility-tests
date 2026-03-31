@@ -42,6 +42,8 @@ import java.util.Set;
  *   <li>{@code iam}
  *   <li>{@code sts}
  *   <li>{@code iam-perf}
+ *   <li>{@code cognito}
+ *   <li>{@code cognito-oauth}
  *   <li>{@code elasticache}
  *   <li>{@code elasticache-mgmt}
  *   <li>{@code elasticache-lettuce}
@@ -104,6 +106,7 @@ public class FlociTest {
                 new SecretsManagerTests(),
                 new KmsTests(),
                 new CognitoTests(),
+                new CognitoOAuthTests(),
                 new StepFunctionsTests(),
                 new StepFunctionsJsonataTests(),
                 new StepFunctionsDynamoDbTests(),

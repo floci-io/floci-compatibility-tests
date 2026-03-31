@@ -44,6 +44,7 @@ Runs 507 assertions across 37 test groups against a live Floci instance — no m
 | `secretsmanager` | Create/get/put/list/rotate/delete secrets, versioning, tags |
 | `kms` | Keys, aliases, encrypt/decrypt, data keys, sign/verify, re-encrypt |
 | `cognito` | User pools, clients, AdminCreateUser, InitiateAuth, GetUser |
+| `cognito-oauth` | Resource server CRUD, confidential clients, `/oauth2/token`, OIDC discovery, JWKS/JWT verification |
 | `stepfunctions` | State machines, executions, history |
 
 ## Requirements
