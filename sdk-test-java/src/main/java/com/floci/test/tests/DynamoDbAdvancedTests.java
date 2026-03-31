@@ -26,6 +26,7 @@ public class DynamoDbAdvancedTests implements TestGroup {
 
             runGsiTests(ctx, ddb);
             runPaginationTests(ctx, ddb);
+            runQueryFilterPaginationTests(ctx, ddb);
             runConditionExpressionTests(ctx, ddb);
             runTransactTests(ctx, ddb);
             runTtlTests(ctx, ddb);
@@ -188,6 +189,85 @@ public class DynamoDbAdvancedTests implements TestGroup {
         } catch (Exception e) {
             ctx.check("DDB Scan pagination retrieves all 5 items", false, e);
             ctx.check("DDB Query pagination retrieves all 5 items", false, e);
+        } finally {
+            deleteSilently(ddb, tableName);
+        }
+    }
+
+    private void runQueryFilterPaginationTests(TestContext ctx, DynamoDbClient ddb) {
+        String tableName = "adv-query-filter-table";
+
+        try {
+            ddb.createTable(CreateTableRequest.builder()
+                    .tableName(tableName)
+                    .keySchema(
+                            KeySchemaElement.builder().attributeName("pk").keyType(KeyType.HASH).build(),
+                            KeySchemaElement.builder().attributeName("sk").keyType(KeyType.RANGE).build()
+                    )
+                    .attributeDefinitions(
+                            AttributeDefinition.builder().attributeName("pk").attributeType(ScalarAttributeType.S).build(),
+                            AttributeDefinition.builder().attributeName("sk").attributeType(ScalarAttributeType.S).build()
+                    )
+                    .provisionedThroughput(ProvisionedThroughput.builder()
+                            .readCapacityUnits(5L).writeCapacityUnits(5L).build())
+                    .build());
+
+            ddb.putItem(PutItemRequest.builder().tableName(tableName)
+                    .item(Map.of(
+                            "pk", AttributeValue.fromS("user-1"),
+                            "sk", AttributeValue.fromS("order-001"),
+                            "status", AttributeValue.fromS("expired-1"),
+                            "expiresAt", AttributeValue.fromN("90")
+                    )).build());
+            ddb.putItem(PutItemRequest.builder().tableName(tableName)
+                    .item(Map.of(
+                            "pk", AttributeValue.fromS("user-1"),
+                            "sk", AttributeValue.fromS("order-002"),
+                            "status", AttributeValue.fromS("alive-1"),
+                            "expiresAt", AttributeValue.fromN("100")
+                    )).build());
+            ddb.putItem(PutItemRequest.builder().tableName(tableName)
+                    .item(Map.of(
+                            "pk", AttributeValue.fromS("user-1"),
+                            "sk", AttributeValue.fromS("order-003"),
+                            "status", AttributeValue.fromS("alive-2"),
+                            "expiresAt", AttributeValue.fromN("110")
+                    )).build());
+
+            QueryRequest baseRequest = QueryRequest.builder()
+                    .tableName(tableName)
+                    .keyConditionExpression("pk = :pk")
+                    .filterExpression("#expires >= :now")
+                    .expressionAttributeNames(Map.of("#expires", "expiresAt"))
+                    .expressionAttributeValues(Map.of(
+                            ":pk", AttributeValue.fromS("user-1"),
+                            ":now", AttributeValue.fromN("100")
+                    ))
+                    .limit(2)
+                    .build();
+
+            QueryResponse page1 = ddb.query(baseRequest);
+            boolean firstPageMatches = page1.count() == 1
+                    && page1.scannedCount() == 2
+                    && page1.hasItems()
+                    && "alive-1".equals(page1.items().get(0).get("status").s())
+                    && page1.hasLastEvaluatedKey()
+                    && "order-002".equals(page1.lastEvaluatedKey().get("sk").s());
+            ctx.check("DDB Query FilterExpression limit keeps pre-filter page state", firstPageMatches);
+
+            QueryResponse page2 = ddb.query(baseRequest.toBuilder()
+                    .exclusiveStartKey(page1.lastEvaluatedKey())
+                    .build());
+            boolean secondPageMatches = page2.count() == 1
+                    && page2.scannedCount() == 1
+                    && page2.hasItems()
+                    && "alive-2".equals(page2.items().get(0).get("status").s())
+                    && !page2.hasLastEvaluatedKey();
+            ctx.check("DDB Query FilterExpression pagination resumes from last evaluated key", secondPageMatches);
+
+        } catch (Exception e) {
+            ctx.check("DDB Query FilterExpression limit keeps pre-filter page state", false, e);
+            ctx.check("DDB Query FilterExpression pagination resumes from last evaluated key", false, e);
         } finally {
             deleteSilently(ddb, tableName);
         }

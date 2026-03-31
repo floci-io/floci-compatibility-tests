@@ -59,6 +59,7 @@ import java.util.Set;
  *   <li>{@code s3-presigned-post}
  *   <li>{@code ses}
  *   <li>{@code apigateway-openapi-import}
+ *   <li>{@code opensearch}
  * </ul>
  */
 public class FlociTest {
@@ -112,6 +113,7 @@ public class FlociTest {
                 new StepFunctionsJsonataTests(),
                 new StepFunctionsDynamoDbTests(),
                 new SesTests(),
+                new OpenSearchTests(),
                 new ApiGatewayAwsIntegrationTests()
         );
 

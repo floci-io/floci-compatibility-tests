@@ -142,6 +142,11 @@
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>ses</artifactId>
         </dependency>
+        <!-- OpenSearch Service management client -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>opensearch</artifactId>
+        </dependency>
         <!-- JDBC drivers for RDS data-plane tests -->
         <dependency>
             <groupId>org.postgresql</groupId>

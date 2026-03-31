@@ -424,6 +424,53 @@ run_dynamodb() {
     cnt=$(echo "$out" | python3 -c "import sys,json; print(json.load(sys.stdin).get('Count',0))" 2>/dev/null || echo 0)
     check "DynamoDB Query" "$( [ "$cnt" -gt 0 ] && echo true || echo false )" "$out"
 
+    out=$(aws_cmd dynamodb put-item --table-name "$table" \
+        --item '{"pk":{"S":"user-1"},"sk":{"S":"order-001"},"status":{"S":"expired-1"},"expiresAt":{"N":"90"}}' 2>&1) && rc=0 || rc=1
+    check "DynamoDB PutItem Filter Fixture 1" "$( [ $rc -eq 0 ] && echo true || echo false )" "$out"
+
+    out=$(aws_cmd dynamodb put-item --table-name "$table" \
+        --item '{"pk":{"S":"user-1"},"sk":{"S":"order-002"},"status":{"S":"alive-1"},"expiresAt":{"N":"100"}}' 2>&1) && rc=0 || rc=1
+    check "DynamoDB PutItem Filter Fixture 2" "$( [ $rc -eq 0 ] && echo true || echo false )" "$out"
+
+    out=$(aws_cmd dynamodb put-item --table-name "$table" \
+        --item '{"pk":{"S":"user-1"},"sk":{"S":"order-003"},"status":{"S":"alive-2"},"expiresAt":{"N":"110"}}' 2>&1) && rc=0 || rc=1
+    check "DynamoDB PutItem Filter Fixture 3" "$( [ $rc -eq 0 ] && echo true || echo false )" "$out"
+
+    out=$(aws_cmd dynamodb query --table-name "$table" \
+        --key-condition-expression "pk = :pk" \
+        --filter-expression "#expires >= :now" \
+        --expression-attribute-names '{"#expires":"expiresAt"}' \
+        --expression-attribute-values '{":pk":{"S":"user-1"},":now":{"N":"100"}}' 2>&1) && rc=0 || rc=1
+    cnt=$(echo "$out" | python3 -c "import sys,json; print(json.load(sys.stdin).get('Count',0))" 2>/dev/null || echo 0)
+    scanned=$(echo "$out" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ScannedCount',0))" 2>/dev/null || echo 0)
+    statuses=$(echo "$out" | python3 -c "import sys,json; print(','.join(item['status']['S'] for item in json.load(sys.stdin).get('Items',[])))" 2>/dev/null || echo "")
+    check "DynamoDB Query FilterExpression" "$( [ "$cnt" -eq 2 ] && [ "$scanned" -eq 3 ] && [ "$statuses" = "alive-1,alive-2" ] && echo true || echo false )" "$out"
+
+    out=$(aws_cmd dynamodb query --table-name "$table" \
+        --key-condition-expression "pk = :pk" \
+        --filter-expression "#expires >= :now" \
+        --expression-attribute-names '{"#expires":"expiresAt"}' \
+        --expression-attribute-values '{":pk":{"S":"user-1"},":now":{"N":"100"}}' \
+        --limit 2 2>&1) && rc=0 || rc=1
+    cnt=$(echo "$out" | python3 -c "import sys,json; print(json.load(sys.stdin).get('Count',0))" 2>/dev/null || echo 0)
+    scanned=$(echo "$out" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ScannedCount',0))" 2>/dev/null || echo 0)
+    statuses=$(echo "$out" | python3 -c "import sys,json; print(','.join(item['status']['S'] for item in json.load(sys.stdin).get('Items',[])))" 2>/dev/null || echo "")
+    lek_sk=$(echo "$out" | python3 -c "import sys,json; print(json.load(sys.stdin).get('LastEvaluatedKey',{}).get('sk',{}).get('S',''))" 2>/dev/null || echo "")
+    check "DynamoDB Query FilterExpression Limit" "$( [ "$cnt" -eq 1 ] && [ "$scanned" -eq 2 ] && [ "$statuses" = "alive-1" ] && [ "$lek_sk" = "order-002" ] && echo true || echo false )" "$out"
+
+    out=$(aws_cmd dynamodb query --table-name "$table" \
+        --key-condition-expression "pk = :pk" \
+        --filter-expression "#expires >= :now" \
+        --expression-attribute-names '{"#expires":"expiresAt"}' \
+        --expression-attribute-values '{":pk":{"S":"user-1"},":now":{"N":"100"}}' \
+        --limit 2 \
+        --exclusive-start-key '{"pk":{"S":"user-1"},"sk":{"S":"order-002"}}' 2>&1) && rc=0 || rc=1
+    cnt=$(echo "$out" | python3 -c "import sys,json; print(json.load(sys.stdin).get('Count',0))" 2>/dev/null || echo 0)
+    scanned=$(echo "$out" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ScannedCount',0))" 2>/dev/null || echo 0)
+    statuses=$(echo "$out" | python3 -c "import sys,json; print(','.join(item['status']['S'] for item in json.load(sys.stdin).get('Items',[])))" 2>/dev/null || echo "")
+    lek_sk=$(echo "$out" | python3 -c "import sys,json; print(json.load(sys.stdin).get('LastEvaluatedKey',{}).get('sk',{}).get('S',''))" 2>/dev/null || echo "")
+    check "DynamoDB Query FilterExpression NextPage" "$( [ "$cnt" -eq 1 ] && [ "$scanned" -eq 1 ] && [ "$statuses" = "alive-2" ] && [ -z "$lek_sk" ] && echo true || echo false )" "$out"
+
     out=$(aws_cmd dynamodb delete-item --table-name "$table" \
         --key '{"pk":{"S":"item1"},"sk":{"S":"sort1"}}' 2>&1) && rc=0 || rc=1
     check "DynamoDB DeleteItem" "$( [ $rc -eq 0 ] && echo true || echo false )" "$out"
