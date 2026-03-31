@@ -21,7 +21,7 @@ import { KMSClient, CreateKeyCommand, ListKeysCommand, DescribeKeyCommand, Encry
 import { KinesisClient, CreateStreamCommand, DescribeStreamCommand, PutRecordCommand, GetShardIteratorCommand, GetRecordsCommand, DeleteStreamCommand, ListStreamsCommand } from "@aws-sdk/client-kinesis";
 import { CloudWatchClient, PutMetricDataCommand, GetMetricStatisticsCommand, ListMetricsCommand, PutMetricAlarmCommand, DescribeAlarmsCommand, DeleteAlarmsCommand } from "@aws-sdk/client-cloudwatch";
 import { createPublicKey, createVerify } from "node:crypto";
-import { CognitoIdentityProviderClient, CreateUserPoolCommand, CreateUserPoolClientCommand, CreateResourceServerCommand, DescribeResourceServerCommand, ListResourceServersCommand, UpdateResourceServerCommand, DeleteResourceServerCommand, DeleteUserPoolClientCommand, AdminCreateUserCommand, AdminSetUserPasswordCommand, InitiateAuthCommand, RespondToAuthChallengeCommand, SignUpCommand, ConfirmSignUpCommand, AdminGetUserCommand, ListUsersCommand, DeleteUserPoolCommand } from "@aws-sdk/client-cognito-identity-provider";
+import { CognitoIdentityProviderClient, CreateUserPoolCommand, CreateUserPoolClientCommand, CreateResourceServerCommand, DescribeResourceServerCommand, ListResourceServersCommand, UpdateResourceServerCommand, DeleteResourceServerCommand, DeleteUserPoolClientCommand, AdminCreateUserCommand, AdminSetUserPasswordCommand, InitiateAuthCommand, RespondToAuthChallengeCommand, SignUpCommand, ConfirmSignUpCommand, AdminGetUserCommand, ListUsersCommand, DeleteUserPoolCommand, CreateGroupCommand, GetGroupCommand, ListGroupsCommand, DeleteGroupCommand, AdminAddUserToGroupCommand, AdminRemoveUserFromGroupCommand, AdminListGroupsForUserCommand } from "@aws-sdk/client-cognito-identity-provider";
 
 const ENDPOINT = process.env.FLOCI_ENDPOINT || "http://localhost:4566";
 const REGION = "us-east-1";
@@ -1227,6 +1227,80 @@ async function testCognito() {
     }));
     check("SignUp+Confirm succeeded", true);
   });
+
+  // ── Groups ──────────────────────────────────────────────────────
+
+  await tryOk("CreateGroup", async () => {
+    const r = await cognito.send(new CreateGroupCommand({
+      UserPoolId: poolId, GroupName: "test-group",
+      Description: "Test group", Precedence: 1
+    }));
+    check("Group name returned", r.Group.GroupName === "test-group");
+  });
+
+  await tryOk("GetGroup", async () => {
+    const r = await cognito.send(new GetGroupCommand({
+      UserPoolId: poolId, GroupName: "test-group"
+    }));
+    check("GetGroup name", r.Group.GroupName === "test-group");
+    check("GetGroup description", r.Group.Description === "Test group");
+    check("GetGroup precedence", r.Group.Precedence === 1);
+  });
+
+  await tryFail("CreateGroup duplicate", () =>
+    cognito.send(new CreateGroupCommand({
+      UserPoolId: poolId, GroupName: "test-group"
+    })));
+
+  await tryOk("ListGroups", async () => {
+    const r = await cognito.send(new ListGroupsCommand({ UserPoolId: poolId }));
+    check("Group in list", r.Groups.some(g => g.GroupName === "test-group"));
+  });
+
+  await tryOk("AdminAddUserToGroup", () =>
+    cognito.send(new AdminAddUserToGroupCommand({
+      UserPoolId: poolId, GroupName: "test-group", Username: "nodeuser"
+    })));
+
+  await tryOk("AdminListGroupsForUser", async () => {
+    const r = await cognito.send(new AdminListGroupsForUserCommand({
+      UserPoolId: poolId, Username: "nodeuser"
+    }));
+    check("User has group", r.Groups.some(g => g.GroupName === "test-group"));
+  });
+
+  await tryOk("InitiateAuth groups in JWT", async () => {
+    const r = await cognito.send(new InitiateAuthCommand({
+      AuthFlow: "USER_PASSWORD_AUTH",
+      AuthParameters: { USERNAME: "nodeuser", PASSWORD: "Perm456!" },
+      ClientId: clientId
+    }));
+    const payload = decodeJwtPart(r.AuthenticationResult.AccessToken, 1);
+    check("JWT cognito:groups present", Array.isArray(payload["cognito:groups"]));
+    check("JWT cognito:groups contains test-group", payload["cognito:groups"]?.includes("test-group"));
+  });
+
+  await tryOk("AdminRemoveUserFromGroup", () =>
+    cognito.send(new AdminRemoveUserFromGroupCommand({
+      UserPoolId: poolId, GroupName: "test-group", Username: "nodeuser"
+    })));
+
+  await tryOk("AdminListGroupsForUser empty", async () => {
+    const r = await cognito.send(new AdminListGroupsForUserCommand({
+      UserPoolId: poolId, Username: "nodeuser"
+    }));
+    check("No groups after removal", r.Groups.length === 0);
+  });
+
+  await tryOk("DeleteGroup", () =>
+    cognito.send(new DeleteGroupCommand({
+      UserPoolId: poolId, GroupName: "test-group"
+    })));
+
+  await tryFail("GetGroup not found", () =>
+    cognito.send(new GetGroupCommand({
+      UserPoolId: poolId, GroupName: "test-group"
+    })));
 
   await tryOk("JWKS endpoint", async () => {
     const resp = await fetch(`${ENDPOINT}/${poolId}/.well-known/jwks.json`);

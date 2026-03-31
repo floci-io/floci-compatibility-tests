@@ -749,10 +749,132 @@ run_kms() {
 }
 
 # ---------------------------------------------------------------------------
+# Cognito
+# ---------------------------------------------------------------------------
+
+run_cognito() {
+    echo "--- Cognito Tests ---"
+
+    local out rc pool_id client_id
+
+    # CreateUserPool
+    out=$(aws_cmd cognito-idp create-user-pool --pool-name "cli-test-pool" 2>&1) && rc=0 || rc=1
+    pool_id=$(echo "$out" | python -c "import sys,json; print(json.load(sys.stdin)['UserPool']['Id'])" 2>/dev/null || echo "")
+    check "Cognito CreateUserPool" "$( [ -n "$pool_id" ] && echo true || echo false )" "$out"
+
+    # CreateUserPoolClient
+    out=$(aws_cmd cognito-idp create-user-pool-client --user-pool-id "$pool_id" --client-name "cli-client" 2>&1) && rc=0 || rc=1
+    client_id=$(echo "$out" | python -c "import sys,json; print(json.load(sys.stdin)['UserPoolClient']['ClientId'])" 2>/dev/null || echo "")
+    check "Cognito CreateUserPoolClient" "$( [ -n "$client_id" ] && echo true || echo false )" "$out"
+
+    # AdminCreateUser
+    out=$(aws_cmd cognito-idp admin-create-user \
+        --user-pool-id "$pool_id" \
+        --username "cliuser" \
+        --temporary-password "Temp123!" \
+        --user-attributes Name=email,Value=cliuser@example.com 2>&1) && rc=0 || rc=1
+    local created_user
+    created_user=$(echo "$out" | python -c "import sys,json; print(json.load(sys.stdin)['User']['Username'])" 2>/dev/null || echo "")
+    check "Cognito AdminCreateUser" "$( [ "$created_user" = "cliuser" ] && echo true || echo false )" "$out"
+
+    # AdminSetUserPassword
+    out=$(aws_cmd cognito-idp admin-set-user-password \
+        --user-pool-id "$pool_id" --username "cliuser" \
+        --password "Perm456!" --permanent 2>&1) && rc=0 || rc=1
+    check "Cognito AdminSetUserPassword" "$( [ $rc -eq 0 ] && echo true || echo false )" "$out"
+
+    # CreateGroup
+    out=$(aws_cmd cognito-idp create-group \
+        --user-pool-id "$pool_id" \
+        --group-name "test-group" \
+        --description "Test group" \
+        --precedence 1 2>&1) && rc=0 || rc=1
+    local group_name
+    group_name=$(echo "$out" | python -c "import sys,json; print(json.load(sys.stdin)['Group']['GroupName'])" 2>/dev/null || echo "")
+    check "Cognito CreateGroup" "$( [ "$group_name" = "test-group" ] && echo true || echo false )" "$out"
+
+    # GetGroup
+    out=$(aws_cmd cognito-idp get-group \
+        --user-pool-id "$pool_id" --group-name "test-group" 2>&1) && rc=0 || rc=1
+    local got_name got_desc got_prec
+    got_name=$(echo "$out" | python -c "import sys,json; print(json.load(sys.stdin)['Group']['GroupName'])" 2>/dev/null || echo "")
+    got_desc=$(echo "$out" | python -c "import sys,json; print(json.load(sys.stdin)['Group']['Description'])" 2>/dev/null || echo "")
+    got_prec=$(echo "$out" | python -c "import sys,json; print(json.load(sys.stdin)['Group']['Precedence'])" 2>/dev/null || echo "")
+    check "Cognito GetGroup" "$( [ "$got_name" = "test-group" ] && [ "$got_desc" = "Test group" ] && [ "$got_prec" = "1" ] && echo true || echo false )" "$out"
+
+    # CreateGroup duplicate
+    out=$(aws_cmd cognito-idp create-group \
+        --user-pool-id "$pool_id" --group-name "test-group" 2>&1) && rc=0 || rc=1
+    check "Cognito CreateGroup duplicate rejected" "$( [ $rc -ne 0 ] && echo true || echo false )" "$out"
+
+    # ListGroups
+    out=$(aws_cmd cognito-idp list-groups --user-pool-id "$pool_id" 2>&1) && rc=0 || rc=1
+    local found_group
+    found_group=$(echo "$out" | python -c "import sys,json; d=json.load(sys.stdin); print('true' if any(g['GroupName']=='test-group' for g in d.get('Groups',[])) else 'false')" 2>/dev/null || echo false)
+    check "Cognito ListGroups" "$found_group" "$out"
+
+    # AdminAddUserToGroup
+    out=$(aws_cmd cognito-idp admin-add-user-to-group \
+        --user-pool-id "$pool_id" --group-name "test-group" --username "cliuser" 2>&1) && rc=0 || rc=1
+    check "Cognito AdminAddUserToGroup" "$( [ $rc -eq 0 ] && echo true || echo false )" "$out"
+
+    # AdminListGroupsForUser
+    out=$(aws_cmd cognito-idp admin-list-groups-for-user \
+        --user-pool-id "$pool_id" --username "cliuser" 2>&1) && rc=0 || rc=1
+    local user_has_group
+    user_has_group=$(echo "$out" | python -c "import sys,json; d=json.load(sys.stdin); print('true' if any(g['GroupName']=='test-group' for g in d.get('Groups',[])) else 'false')" 2>/dev/null || echo false)
+    check "Cognito AdminListGroupsForUser" "$user_has_group" "$out"
+
+    # InitiateAuth and verify cognito:groups in JWT
+    out=$(aws_cmd cognito-idp initiate-auth \
+        --auth-flow USER_PASSWORD_AUTH \
+        --client-id "$client_id" \
+        --auth-parameters USERNAME=cliuser,PASSWORD=Perm456! 2>&1) && rc=0 || rc=1
+    local jwt_groups
+    jwt_groups=$(echo "$out" | python -c "
+import sys,json,base64
+d=json.load(sys.stdin)
+token=d['AuthenticationResult']['AccessToken']
+payload=base64.urlsafe_b64decode(token.split('.')[1]+'==')
+claims=json.loads(payload)
+groups=claims.get('cognito:groups',[])
+print('true' if 'test-group' in groups else 'false')
+" 2>/dev/null || echo false)
+    check "Cognito JWT cognito:groups claim" "$jwt_groups" "$out"
+
+    # AdminRemoveUserFromGroup
+    out=$(aws_cmd cognito-idp admin-remove-user-from-group \
+        --user-pool-id "$pool_id" --group-name "test-group" --username "cliuser" 2>&1) && rc=0 || rc=1
+    check "Cognito AdminRemoveUserFromGroup" "$( [ $rc -eq 0 ] && echo true || echo false )" "$out"
+
+    # AdminListGroupsForUser — empty
+    out=$(aws_cmd cognito-idp admin-list-groups-for-user \
+        --user-pool-id "$pool_id" --username "cliuser" 2>&1) && rc=0 || rc=1
+    local groups_empty
+    groups_empty=$(echo "$out" | python -c "import sys,json; d=json.load(sys.stdin); print('true' if len(d.get('Groups',[]))==0 else 'false')" 2>/dev/null || echo false)
+    check "Cognito AdminListGroupsForUser empty" "$groups_empty" "$out"
+
+    # DeleteGroup
+    out=$(aws_cmd cognito-idp delete-group \
+        --user-pool-id "$pool_id" --group-name "test-group" 2>&1) && rc=0 || rc=1
+    check "Cognito DeleteGroup" "$( [ $rc -eq 0 ] && echo true || echo false )" "$out"
+
+    # GetGroup after delete — expect not found
+    out=$(aws_cmd cognito-idp get-group \
+        --user-pool-id "$pool_id" --group-name "test-group" 2>&1) && rc=0 || rc=1
+    check "Cognito GetGroup not found" "$( [ $rc -ne 0 ] && echo true || echo false )" "$out"
+
+    # Cleanup
+    aws_cmd cognito-idp admin-delete-user --user-pool-id "$pool_id" --username "cliuser" >/dev/null 2>&1 || true
+    aws_cmd cognito-idp delete-user-pool-client --user-pool-id "$pool_id" --client-id "$client_id" >/dev/null 2>&1 || true
+    aws_cmd cognito-idp delete-user-pool --user-pool-id "$pool_id" >/dev/null 2>&1 || true
+}
+
+# ---------------------------------------------------------------------------
 # Group registry and entry point
 # ---------------------------------------------------------------------------
 
-ALL_GROUPS=(ssm sqs sns s3 dynamodb dynamodb-gsi dynamodb-scan-filter iam sts secretsmanager kms)
+ALL_GROUPS=(ssm sqs sns s3 dynamodb dynamodb-gsi dynamodb-scan-filter iam sts secretsmanager kms cognito)
 
 resolve_enabled() {
     local names=()
