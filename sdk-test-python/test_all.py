@@ -901,7 +901,7 @@ def run_dynamodb():
 
 
 # ---------------------------------------------------------------------------
-# DynamoDB GSI/LSI (validates CloudFormation index provisioning — PR #125)
+# DynamoDB GSI/LSI (validates CloudFormation index provisioning)
 # ---------------------------------------------------------------------------
 
 def run_dynamodb_gsi():

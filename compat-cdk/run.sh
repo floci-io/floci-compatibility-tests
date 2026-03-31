@@ -53,7 +53,7 @@ QUEUES=$(aws --endpoint-url "$ENDPOINT" sqs list-queues 2>/dev/null | python3 -c
 TABLES=$(aws --endpoint-url "$ENDPOINT" dynamodb list-tables 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('TableNames', [])))" 2>/dev/null || echo "0")
 [ "$TABLES" -gt 0 ] && check "DynamoDB table exists" 0 || check "DynamoDB table exists" 1
 
-# DynamoDB GSI/LSI index table — validates CloudFormation index provisioning (PR #125)
+# DynamoDB GSI/LSI index table — validates CloudFormation index provisioning
 IDX_DESC=$(aws --endpoint-url "$ENDPOINT" dynamodb describe-table --table-name floci-cdk-index-table 2>/dev/null || echo '{}')
 
 GSI_COUNT=$(echo "$IDX_DESC" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('Table',{}).get('GlobalSecondaryIndexes',[])))" 2>/dev/null || echo "0")

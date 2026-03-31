@@ -23,7 +23,7 @@ export class FlociTestStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    // DynamoDB table with GSI and LSI — validates CloudFormation index provisioning (PR #125)
+    // DynamoDB table with GSI and LSI — validates CloudFormation index provisioning
     const indexTable = new dynamodb.TableV2(this, 'IndexTestTable', {
       tableName: 'floci-cdk-index-table',
       partitionKey: { name: 'pk', type: dynamodb.AttributeType.STRING },

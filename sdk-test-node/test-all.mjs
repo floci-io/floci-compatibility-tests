@@ -487,7 +487,7 @@ async function testDynamoDb() {
 }
 
 // ───────────────────── DynamoDB GSI/LSI ─────────────────────
-// Validates CloudFormation index provisioning (PR #125)
+// Validates CloudFormation index provisioning
 async function testDynamoDbGsi() {
   console.log("\n=== DynamoDB GSI/LSI ===");
   const dynamo = makeClient(DynamoDBClient);
