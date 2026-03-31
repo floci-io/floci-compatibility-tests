@@ -534,6 +534,109 @@ run_dynamodb_gsi() {
     aws_cmd dynamodb delete-table --table-name "$table" >/dev/null 2>&1 || true
 }
 
+run_dynamodb_scan_filter() {
+    echo "--- DynamoDB Scan/Query FilterExpression Tests ---"
+    local out rc
+
+    # ---- Test 1: Scan with contains() on List attribute ----
+    local t1="cli-scan-contains-list"
+    aws_cmd dynamodb create-table --table-name "$t1" \
+        --attribute-definitions AttributeName=id,AttributeType=S \
+        --key-schema AttributeName=id,KeyType=HASH \
+        --billing-mode PAY_PER_REQUEST >/dev/null 2>&1
+
+    aws_cmd dynamodb put-item --table-name "$t1" --item '{"id":{"S":"1"},"tags":{"L":[{"S":"a"},{"S":"b"}]}}' >/dev/null 2>&1
+    aws_cmd dynamodb put-item --table-name "$t1" --item '{"id":{"S":"2"},"tags":{"L":[{"S":"a"},{"S":"c"}]}}' >/dev/null 2>&1
+    aws_cmd dynamodb put-item --table-name "$t1" --item '{"id":{"S":"3"},"tags":{"L":[{"S":"b"},{"S":"c"}]}}' >/dev/null 2>&1
+
+    out=$(aws_cmd dynamodb scan --table-name "$t1" \
+        --filter-expression "contains(tags, :v)" \
+        --expression-attribute-values '{":v":{"S":"a"}}' 2>&1) && rc=0 || rc=1
+    cnt=$(echo "$out" | python -c "import sys,json; print(json.load(sys.stdin).get('Count',0))" 2>/dev/null || echo 0)
+    check "DDB Scan contains() on List returns matching items" "$( [ "$cnt" = "2" ] && echo true || echo false )" "got $cnt"
+
+    aws_cmd dynamodb delete-table --table-name "$t1" >/dev/null 2>&1 || true
+
+    # ---- Test 2: Scan with <> on BOOL attribute ----
+    local t2="cli-scan-bool-ne"
+    aws_cmd dynamodb create-table --table-name "$t2" \
+        --attribute-definitions AttributeName=id,AttributeType=S \
+        --key-schema AttributeName=id,KeyType=HASH \
+        --billing-mode PAY_PER_REQUEST >/dev/null 2>&1
+
+    aws_cmd dynamodb put-item --table-name "$t2" --item '{"id":{"S":"1"},"deleted":{"BOOL":false}}' >/dev/null 2>&1
+    aws_cmd dynamodb put-item --table-name "$t2" --item '{"id":{"S":"2"},"deleted":{"BOOL":true}}' >/dev/null 2>&1
+    aws_cmd dynamodb put-item --table-name "$t2" --item '{"id":{"S":"3"},"deleted":{"BOOL":false}}' >/dev/null 2>&1
+
+    out=$(aws_cmd dynamodb scan --table-name "$t2" \
+        --filter-expression "deleted <> :d" \
+        --expression-attribute-values '{":d":{"BOOL":true}}' 2>&1) && rc=0 || rc=1
+    cnt=$(echo "$out" | python -c "import sys,json; print(json.load(sys.stdin).get('Count',0))" 2>/dev/null || echo 0)
+    check "DDB Scan BOOL <> filters correctly" "$( [ "$cnt" = "2" ] && echo true || echo false )" "got $cnt"
+
+    aws_cmd dynamodb delete-table --table-name "$t2" >/dev/null 2>&1 || true
+
+    # ---- Test 3: Query on GSI with <> on BOOL attribute ----
+    local t3="cli-query-gsi-bool-ne"
+    aws_cmd dynamodb create-table --table-name "$t3" \
+        --attribute-definitions 'AttributeName=id,AttributeType=S' 'AttributeName=grp,AttributeType=S' \
+        --key-schema AttributeName=id,KeyType=HASH \
+        --global-secondary-indexes \
+            'IndexName=grp-idx,KeySchema=[{AttributeName=grp,KeyType=HASH}],Projection={ProjectionType=ALL}' \
+        --billing-mode PAY_PER_REQUEST >/dev/null 2>&1
+
+    aws_cmd dynamodb put-item --table-name "$t3" --item '{"id":{"S":"1"},"grp":{"S":"g1"},"deleted":{"BOOL":false}}' >/dev/null 2>&1
+    aws_cmd dynamodb put-item --table-name "$t3" --item '{"id":{"S":"2"},"grp":{"S":"g1"},"deleted":{"BOOL":true}}' >/dev/null 2>&1
+    aws_cmd dynamodb put-item --table-name "$t3" --item '{"id":{"S":"3"},"grp":{"S":"g1"},"deleted":{"BOOL":false}}' >/dev/null 2>&1
+
+    out=$(aws_cmd dynamodb query --table-name "$t3" --index-name grp-idx \
+        --key-condition-expression "grp = :g" \
+        --filter-expression "deleted <> :d" \
+        --expression-attribute-names '{"#d":"deleted"}' \
+        --expression-attribute-values '{":g":{"S":"g1"},":d":{"BOOL":true}}' 2>&1) && rc=0 || rc=1
+    cnt=$(echo "$out" | python -c "import sys,json; print(json.load(sys.stdin).get('Count',0))" 2>/dev/null || echo 0)
+    check "DDB Query GSI BOOL <> filters correctly" "$( [ "$cnt" = "2" ] && echo true || echo false )" "got $cnt"
+
+    aws_cmd dynamodb delete-table --table-name "$t3" >/dev/null 2>&1 || true
+
+    # ---- Test 4: Scan with attribute_exists on nested Map attribute ----
+    local t4="cli-scan-nested-attr-exists"
+    aws_cmd dynamodb create-table --table-name "$t4" \
+        --attribute-definitions AttributeName=id,AttributeType=S \
+        --key-schema AttributeName=id,KeyType=HASH \
+        --billing-mode PAY_PER_REQUEST >/dev/null 2>&1
+
+    aws_cmd dynamodb put-item --table-name "$t4" --item '{"id":{"S":"1"},"info":{"M":{"name":{"S":"Alice"}}}}' >/dev/null 2>&1
+    aws_cmd dynamodb put-item --table-name "$t4" --item '{"id":{"S":"2"},"info":{"M":{}}}' >/dev/null 2>&1
+    aws_cmd dynamodb put-item --table-name "$t4" --item '{"id":{"S":"3"},"info":{"M":{"name":{"S":"Bob"}}}}' >/dev/null 2>&1
+
+    out=$(aws_cmd dynamodb scan --table-name "$t4" \
+        --filter-expression "attribute_exists(info.#n)" \
+        --expression-attribute-names '{"#n":"name"}' 2>&1) && rc=0 || rc=1
+    cnt=$(echo "$out" | python -c "import sys,json; print(json.load(sys.stdin).get('Count',0))" 2>/dev/null || echo 0)
+    check "DDB Scan attribute_exists on nested Map path" "$( [ "$cnt" = "2" ] && echo true || echo false )" "got $cnt"
+
+    aws_cmd dynamodb delete-table --table-name "$t4" >/dev/null 2>&1 || true
+
+    # ---- Test 5: contains() on String Set (SS) ----
+    local t5="cli-scan-contains-ss"
+    aws_cmd dynamodb create-table --table-name "$t5" \
+        --attribute-definitions AttributeName=id,AttributeType=S \
+        --key-schema AttributeName=id,KeyType=HASH \
+        --billing-mode PAY_PER_REQUEST >/dev/null 2>&1
+
+    aws_cmd dynamodb put-item --table-name "$t5" --item '{"id":{"S":"1"},"roles":{"SS":["admin","user"]}}' >/dev/null 2>&1
+    aws_cmd dynamodb put-item --table-name "$t5" --item '{"id":{"S":"2"},"roles":{"SS":["user"]}}' >/dev/null 2>&1
+
+    out=$(aws_cmd dynamodb scan --table-name "$t5" \
+        --filter-expression "contains(roles, :r)" \
+        --expression-attribute-values '{":r":{"S":"admin"}}' 2>&1) && rc=0 || rc=1
+    cnt=$(echo "$out" | python -c "import sys,json; print(json.load(sys.stdin).get('Count',0))" 2>/dev/null || echo 0)
+    check "DDB Scan contains() on String Set" "$( [ "$cnt" = "1" ] && echo true || echo false )" "got $cnt"
+
+    aws_cmd dynamodb delete-table --table-name "$t5" >/dev/null 2>&1 || true
+}
+
 # ---------------------------------------------------------------------------
 # IAM
 # ---------------------------------------------------------------------------
@@ -649,7 +752,7 @@ run_kms() {
 # Group registry and entry point
 # ---------------------------------------------------------------------------
 
-ALL_GROUPS=(ssm sqs sns s3 dynamodb dynamodb-gsi iam sts secretsmanager kms)
+ALL_GROUPS=(ssm sqs sns s3 dynamodb dynamodb-gsi dynamodb-scan-filter iam sts secretsmanager kms)
 
 resolve_enabled() {
     local names=()
