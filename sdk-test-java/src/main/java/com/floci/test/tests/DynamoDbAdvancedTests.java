@@ -29,6 +29,7 @@ public class DynamoDbAdvancedTests implements TestGroup {
             runGsiTests(ctx, ddb);
             runPaginationTests(ctx, ddb);
             runQueryFilterPaginationTests(ctx, ddb);
+            runSortKeyQueryTests(ctx, ddb);
             runConditionExpressionTests(ctx, ddb);
             runTransactTests(ctx, ddb);
             runTtlTests(ctx, ddb);
@@ -270,6 +271,78 @@ public class DynamoDbAdvancedTests implements TestGroup {
         } catch (Exception e) {
             ctx.check("DDB Query FilterExpression limit keeps pre-filter page state", false, e);
             ctx.check("DDB Query FilterExpression pagination resumes from last evaluated key", false, e);
+        } finally {
+            deleteSilently(ddb, tableName);
+        }
+    }
+
+    private void runSortKeyQueryTests(TestContext ctx, DynamoDbClient ddb) {
+        String tableName = "adv-sortkey-query-table";
+
+        try {
+            ddb.createTable(CreateTableRequest.builder()
+                    .tableName(tableName)
+                    .keySchema(
+                            KeySchemaElement.builder().attributeName("pk").keyType(KeyType.HASH).build(),
+                            KeySchemaElement.builder().attributeName("sk").keyType(KeyType.RANGE).build()
+                    )
+                    .attributeDefinitions(
+                            AttributeDefinition.builder().attributeName("pk").attributeType(ScalarAttributeType.S).build(),
+                            AttributeDefinition.builder().attributeName("sk").attributeType(ScalarAttributeType.S).build()
+                    )
+                    .provisionedThroughput(ProvisionedThroughput.builder()
+                            .readCapacityUnits(5L).writeCapacityUnits(5L).build())
+                    .build());
+
+            ddb.putItem(PutItemRequest.builder().tableName(tableName)
+                    .item(Map.of(
+                            "pk", AttributeValue.fromS("user-1"),
+                            "sk", AttributeValue.fromS("order-001")
+                    )).build());
+            ddb.putItem(PutItemRequest.builder().tableName(tableName)
+                    .item(Map.of(
+                            "pk", AttributeValue.fromS("user-1"),
+                            "sk", AttributeValue.fromS("order-002")
+                    )).build());
+            ddb.putItem(PutItemRequest.builder().tableName(tableName)
+                    .item(Map.of(
+                            "pk", AttributeValue.fromS("user-1"),
+                            "sk", AttributeValue.fromS("order-003")
+                    )).build());
+
+            QueryResponse betweenResp = ddb.query(QueryRequest.builder()
+                    .tableName(tableName)
+                    .keyConditionExpression("pk = :pk AND sk BETWEEN :from AND :to")
+                    .expressionAttributeValues(Map.of(
+                            ":pk", AttributeValue.fromS("user-1"),
+                            ":from", AttributeValue.fromS("order-001"),
+                            ":to", AttributeValue.fromS("order-002")
+                    ))
+                    .build());
+            boolean betweenMatches = betweenResp.count() == 2
+                    && betweenResp.items().size() == 2
+                    && "order-001".equals(betweenResp.items().get(0).get("sk").s())
+                    && "order-002".equals(betweenResp.items().get(1).get("sk").s());
+            ctx.check("DDB Query BETWEEN on sort key filters correctly", betweenMatches);
+
+            QueryResponse descendingResp = ddb.query(QueryRequest.builder()
+                    .tableName(tableName)
+                    .keyConditionExpression("pk = :pk")
+                    .expressionAttributeValues(Map.of(
+                            ":pk", AttributeValue.fromS("user-1")
+                    ))
+                    .scanIndexForward(false)
+                    .build());
+            boolean descendingMatches = descendingResp.count() == 3
+                    && descendingResp.items().size() == 3
+                    && "order-003".equals(descendingResp.items().get(0).get("sk").s())
+                    && "order-002".equals(descendingResp.items().get(1).get("sk").s())
+                    && "order-001".equals(descendingResp.items().get(2).get("sk").s());
+            ctx.check("DDB Query ScanIndexForward=false returns descending sort key order", descendingMatches);
+
+        } catch (Exception e) {
+            ctx.check("DDB Query BETWEEN on sort key filters correctly", false, e);
+            ctx.check("DDB Query ScanIndexForward=false returns descending sort key order", false, e);
         } finally {
             deleteSilently(ddb, tableName);
         }
