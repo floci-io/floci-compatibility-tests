@@ -18,6 +18,7 @@ Compatibility tests for [Floci](https://github.com/hectorvent/floci) using **bot
 | `kms` | Keys, aliases, encrypt/decrypt, data keys, sign/verify |
 | `kinesis` | Streams, shards, PutRecord/GetRecords |
 | `cloudwatch-metrics` | PutMetricData, ListMetrics, GetMetricStatistics, alarms |
+| `cloudformation-naming` | Auto physical name generation, explicit name precedence, cross-reference |
 | `cognito` | User pools, clients, AdminCreateUser, InitiateAuth, GetUser |
 
 ## Requirements

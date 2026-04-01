@@ -20,6 +20,7 @@ import { SecretsManagerClient, CreateSecretCommand, GetSecretValueCommand, Updat
 import { KMSClient, CreateKeyCommand, ListKeysCommand, DescribeKeyCommand, EncryptCommand, DecryptCommand, GenerateDataKeyCommand } from "@aws-sdk/client-kms";
 import { KinesisClient, CreateStreamCommand, DescribeStreamCommand, PutRecordCommand, GetShardIteratorCommand, GetRecordsCommand, DeleteStreamCommand, ListStreamsCommand } from "@aws-sdk/client-kinesis";
 import { CloudWatchClient, PutMetricDataCommand, GetMetricStatisticsCommand, ListMetricsCommand, PutMetricAlarmCommand, DescribeAlarmsCommand, DeleteAlarmsCommand } from "@aws-sdk/client-cloudwatch";
+import { CloudFormationClient, CreateStackCommand, DescribeStackResourcesCommand, DescribeStacksCommand, DeleteStackCommand } from "@aws-sdk/client-cloudformation";
 import { createPublicKey, createVerify } from "node:crypto";
 import { CognitoIdentityProviderClient, CreateUserPoolCommand, CreateUserPoolClientCommand, CreateResourceServerCommand, DescribeResourceServerCommand, ListResourceServersCommand, UpdateResourceServerCommand, DeleteResourceServerCommand, DeleteUserPoolClientCommand, AdminCreateUserCommand, AdminSetUserPasswordCommand, InitiateAuthCommand, RespondToAuthChallengeCommand, SignUpCommand, ConfirmSignUpCommand, AdminGetUserCommand, ListUsersCommand, DeleteUserPoolCommand, CreateGroupCommand, GetGroupCommand, ListGroupsCommand, DeleteGroupCommand, AdminAddUserToGroupCommand, AdminRemoveUserFromGroupCommand, AdminListGroupsForUserCommand } from "@aws-sdk/client-cognito-identity-provider";
 
@@ -1550,6 +1551,176 @@ async function testCognitoOAuth() {
     cognito.send(new DeleteUserPoolCommand({ UserPoolId: poolId })));
 }
 
+// ─────────────────────────── CloudFormation Naming ───────────────────────────
+async function testCloudFormationNaming() {
+  console.log("\n=== CloudFormation Naming ===");
+  const cfn = makeClient(CloudFormationClient);
+  const token = Date.now().toString(36);
+
+  async function createStack(stackName, templateObj) {
+    await cfn.send(new CreateStackCommand({
+      StackName: stackName,
+      TemplateBody: JSON.stringify(templateObj),
+    }));
+  }
+
+  async function waitForStackTerminalState(stackName, expectedSuccess = true) {
+    const successStates = new Set(["CREATE_COMPLETE", "UPDATE_COMPLETE"]);
+    const failureStates = new Set([
+      "CREATE_FAILED",
+      "ROLLBACK_IN_PROGRESS",
+      "ROLLBACK_FAILED",
+      "ROLLBACK_COMPLETE",
+      "DELETE_FAILED",
+      "DELETE_COMPLETE",
+    ]);
+
+    for (let i = 0; i < 40; i++) {
+      const resp = await cfn.send(new DescribeStacksCommand({ StackName: stackName }));
+      const status = resp.Stacks?.[0]?.StackStatus;
+      if (successStates.has(status)) {
+        return { ok: expectedSuccess, status };
+      }
+      if (failureStates.has(status)) {
+        return { ok: !expectedSuccess, status };
+      }
+      await sleep(1000);
+    }
+    return { ok: false, status: "TIMEOUT" };
+  }
+
+  async function getResources(stackName) {
+    const resp = await cfn.send(new DescribeStackResourcesCommand({ StackName: stackName }));
+    return resp.StackResources || [];
+  }
+
+  function physicalId(resources, logicalId) {
+    return resources.find(r => r.LogicalResourceId === logicalId)?.PhysicalResourceId;
+  }
+
+  async function deleteStack(stackName, checkName) {
+    await tryOk(checkName, async () => {
+      await cfn.send(new DeleteStackCommand({ StackName: stackName }));
+    });
+  }
+
+  const autoStack = `cfn-auto-naming-${token}`;
+  const autoTemplate = {
+    Resources: {
+      AutoBucket: { Type: "AWS::S3::Bucket" },
+      AutoQueue: { Type: "AWS::SQS::Queue" },
+      AutoTopic: { Type: "AWS::SNS::Topic" },
+      AutoParameter: {
+        Type: "AWS::SSM::Parameter",
+        Properties: { Type: "String", Value: "v1" },
+      },
+      CrossRefQueue: {
+        Type: "AWS::SQS::Queue",
+        Properties: { QueueName: { "Fn::Sub": "${AutoBucket}-cross" } },
+      },
+    },
+  };
+
+  await tryOk("CFN Naming auto CreateStack", () => createStack(autoStack, autoTemplate));
+  await tryOk("CFN Naming auto stack reaches CREATE_COMPLETE", async () => {
+    const r = await waitForStackTerminalState(autoStack, true);
+    check("CFN Naming auto terminal status", r.ok, r.status);
+  });
+
+  let autoResources = [];
+  await tryOk("CFN Naming auto DescribeStackResources", async () => {
+    autoResources = await getResources(autoStack);
+    check("CFN Naming auto resources present", autoResources.length > 0);
+  });
+
+  const autoBucket = physicalId(autoResources, "AutoBucket");
+  const autoQueue = physicalId(autoResources, "AutoQueue");
+  const autoTopic = physicalId(autoResources, "AutoTopic");
+  const autoParam = physicalId(autoResources, "AutoParameter");
+  const crossQueue = physicalId(autoResources, "CrossRefQueue");
+
+  check("CFN Naming auto S3 generated", !!autoBucket);
+  if (autoBucket) {
+    check("CFN Naming auto S3 constraints",
+      autoBucket.length >= 3
+      && autoBucket.length <= 63
+      && /^[a-z0-9.-]+$/.test(autoBucket)
+      && autoBucket === autoBucket.toLowerCase());
+  }
+
+  check("CFN Naming auto SQS generated", !!autoQueue);
+  if (autoQueue) {
+    const queueName = autoQueue.includes("/") ? autoQueue.slice(autoQueue.lastIndexOf("/") + 1) : autoQueue;
+    check("CFN Naming auto SQS constraints", queueName.length > 0 && queueName.length <= 80);
+  }
+
+  check("CFN Naming auto SNS generated", !!autoTopic);
+  if (autoTopic) {
+    const topicName = autoTopic.includes(":") ? autoTopic.slice(autoTopic.lastIndexOf(":") + 1) : autoTopic;
+    check("CFN Naming auto SNS constraints", topicName.length > 0 && topicName.length <= 256);
+  }
+
+  check("CFN Naming auto SSM generated", !!autoParam);
+  if (autoParam) {
+    check("CFN Naming auto SSM constraints", autoParam.length <= 2048);
+  }
+
+  check("CFN Naming cross-reference queue generated", !!crossQueue);
+  if (autoBucket && crossQueue) {
+    const queueName = crossQueue.includes("/") ? crossQueue.slice(crossQueue.lastIndexOf("/") + 1) : crossQueue;
+    check("CFN Naming cross-reference queue uses AutoBucket", queueName.startsWith(`${autoBucket}-cross`));
+  }
+
+  await deleteStack(autoStack, "CFN Naming auto DeleteStack");
+
+  const explicitStack = `cfn-explicit-naming-${token}`;
+  const explicitBucket = `cfn-explicit-${token}`;
+  const explicitQueue = `cfn-explicit-${token}`;
+  const explicitTopic = `cfn-explicit-${token}`;
+  const explicitParam = `/cfn-explicit/${token}`;
+  const explicitTemplate = {
+    Resources: {
+      NamedBucket: {
+        Type: "AWS::S3::Bucket",
+        Properties: { BucketName: explicitBucket },
+      },
+      NamedQueue: {
+        Type: "AWS::SQS::Queue",
+        Properties: { QueueName: explicitQueue },
+      },
+      NamedTopic: {
+        Type: "AWS::SNS::Topic",
+        Properties: { TopicName: explicitTopic },
+      },
+      NamedParameter: {
+        Type: "AWS::SSM::Parameter",
+        Properties: { Name: explicitParam, Type: "String", Value: "explicit" },
+      },
+    },
+  };
+
+  await tryOk("CFN Naming explicit CreateStack", () => createStack(explicitStack, explicitTemplate));
+  await tryOk("CFN Naming explicit stack reaches CREATE_COMPLETE", async () => {
+    const r = await waitForStackTerminalState(explicitStack, true);
+    check("CFN Naming explicit terminal status", r.ok, r.status);
+  });
+
+  await tryOk("CFN Naming explicit names respected", async () => {
+    const resources = await getResources(explicitStack);
+    const actualBucket = physicalId(resources, "NamedBucket");
+    const actualQueue = physicalId(resources, "NamedQueue");
+    const actualTopic = physicalId(resources, "NamedTopic");
+    const actualParam = physicalId(resources, "NamedParameter");
+
+    check("CFN Naming explicit S3", actualBucket === explicitBucket);
+    check("CFN Naming explicit SQS", !!actualQueue && actualQueue.includes(explicitQueue));
+    check("CFN Naming explicit SNS", !!actualTopic && actualTopic.includes(explicitTopic));
+    check("CFN Naming explicit SSM", actualParam === explicitParam);
+  });
+
+  await deleteStack(explicitStack, "CFN Naming explicit DeleteStack");
+}
+
 // ─────────────────────────── Runner ───────────────────────────
 const ALL_SUITES = {
   ssm: testSsm,
@@ -1565,6 +1736,7 @@ const ALL_SUITES = {
   kms: testKms,
   kinesis: testKinesis,
   cloudwatch: testCloudWatch,
+  "cloudformation-naming": testCloudFormationNaming,
   cognito: testCognito,
   "cognito-oauth": testCognitoOAuth,
 };

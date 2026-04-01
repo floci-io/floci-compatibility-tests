@@ -41,6 +41,7 @@ Runs 507 assertions across 37 test groups against a live Floci instance — no m
 | `kinesis` | Streams, shards, PutRecord/GetRecords, consumers, encryption, split |
 | `cloudwatch-logs` | Log groups/streams, PutLogEvents, GetLogEvents, FilterLogEvents, retention |
 | `cloudwatch-metrics` | PutMetricData, ListMetrics, GetMetricStatistics, alarms, SetAlarmState |
+| `cloudformation-naming` | Auto physical name generation, explicit name precedence, cross-reference |
 | `secretsmanager` | Create/get/put/list/rotate/delete secrets, versioning, tags |
 | `kms` | Keys, aliases, encrypt/decrypt, data keys, sign/verify, re-encrypt |
 | `cognito` | User pools, clients, AdminCreateUser, InitiateAuth, GetUser |

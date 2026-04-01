@@ -1930,6 +1930,190 @@ def run_cognito():
 
 
 # ---------------------------------------------------------------------------
+# CloudFormation naming compatibility (PR #163)
+# ---------------------------------------------------------------------------
+
+def run_cloudformation_naming():
+    print("--- CloudFormation Naming Tests ---")
+    cfn = client("cloudformation")
+    token = format(int(time.time() * 1000), "x")
+
+    def create_stack(stack_name, template_dict):
+        return cfn.create_stack(StackName=stack_name, TemplateBody=json.dumps(template_dict))
+
+    def wait_for_stack_terminal_state(stack_name, expected_success=True):
+        success_states = {"CREATE_COMPLETE", "UPDATE_COMPLETE"}
+        failure_states = {
+            "CREATE_FAILED",
+            "ROLLBACK_IN_PROGRESS",
+            "ROLLBACK_FAILED",
+            "ROLLBACK_COMPLETE",
+            "DELETE_FAILED",
+            "DELETE_COMPLETE",
+        }
+
+        for _ in range(40):
+            resp = cfn.describe_stacks(StackName=stack_name)
+            status = resp.get("Stacks", [{}])[0].get("StackStatus", "")
+            if status in success_states:
+                return expected_success, status
+            if status in failure_states:
+                return (not expected_success), status
+            time.sleep(1)
+        return False, "TIMEOUT"
+
+    def describe_resources(stack_name):
+        return cfn.describe_stack_resources(StackName=stack_name).get("StackResources", [])
+
+    def physical_id(resources, logical_id):
+        for resource in resources:
+            if resource.get("LogicalResourceId") == logical_id:
+                return resource.get("PhysicalResourceId")
+        return None
+
+    def delete_stack(stack_name, check_name):
+        try:
+            cfn.delete_stack(StackName=stack_name)
+            check(check_name, True)
+        except Exception as e:
+            check(check_name, False, e)
+
+    auto_stack = f"cfn-auto-naming-{token}"
+    auto_template = {
+        "Resources": {
+            "AutoBucket": {"Type": "AWS::S3::Bucket"},
+            "AutoQueue": {"Type": "AWS::SQS::Queue"},
+            "AutoTopic": {"Type": "AWS::SNS::Topic"},
+            "AutoParameter": {
+                "Type": "AWS::SSM::Parameter",
+                "Properties": {"Type": "String", "Value": "v1"},
+            },
+            "CrossRefQueue": {
+                "Type": "AWS::SQS::Queue",
+                "Properties": {"QueueName": {"Fn::Sub": "${AutoBucket}-cross"}},
+            },
+        }
+    }
+
+    try:
+        create_stack(auto_stack, auto_template)
+        check("CFN Naming auto CreateStack", True)
+    except Exception as e:
+        check("CFN Naming auto CreateStack", False, e)
+        return
+
+    try:
+        ok, status = wait_for_stack_terminal_state(auto_stack, expected_success=True)
+        check("CFN Naming auto terminal status", ok, status)
+    except Exception as e:
+        check("CFN Naming auto terminal status", False, e)
+        delete_stack(auto_stack, "CFN Naming auto DeleteStack")
+        return
+
+    auto_resources = []
+    try:
+        auto_resources = describe_resources(auto_stack)
+        check("CFN Naming auto DescribeStackResources", len(auto_resources) > 0)
+    except Exception as e:
+        check("CFN Naming auto DescribeStackResources", False, e)
+        delete_stack(auto_stack, "CFN Naming auto DeleteStack")
+        return
+
+    auto_bucket = physical_id(auto_resources, "AutoBucket")
+    auto_queue = physical_id(auto_resources, "AutoQueue")
+    auto_topic = physical_id(auto_resources, "AutoTopic")
+    auto_param = physical_id(auto_resources, "AutoParameter")
+    cross_queue = physical_id(auto_resources, "CrossRefQueue")
+
+    check("CFN Naming auto S3 generated", bool(auto_bucket))
+    if auto_bucket:
+        check(
+            "CFN Naming auto S3 constraints",
+            3 <= len(auto_bucket) <= 63
+            and auto_bucket == auto_bucket.lower()
+            and all(ch.islower() or ch.isdigit() or ch in ".-" for ch in auto_bucket),
+        )
+
+    check("CFN Naming auto SQS generated", bool(auto_queue))
+    if auto_queue:
+        queue_name = auto_queue.rsplit("/", 1)[-1]
+        check("CFN Naming auto SQS constraints", 0 < len(queue_name) <= 80)
+
+    check("CFN Naming auto SNS generated", bool(auto_topic))
+    if auto_topic:
+        topic_name = auto_topic.rsplit(":", 1)[-1]
+        check("CFN Naming auto SNS constraints", 0 < len(topic_name) <= 256)
+
+    check("CFN Naming auto SSM generated", bool(auto_param))
+    if auto_param:
+        check("CFN Naming auto SSM constraints", len(auto_param) <= 2048)
+
+    check("CFN Naming cross-reference queue generated", bool(cross_queue))
+    if auto_bucket and cross_queue:
+        cross_queue_name = cross_queue.rsplit("/", 1)[-1]
+        check("CFN Naming cross-reference queue uses AutoBucket", cross_queue_name.startswith(f"{auto_bucket}-cross"))
+
+    delete_stack(auto_stack, "CFN Naming auto DeleteStack")
+
+    explicit_stack = f"cfn-explicit-naming-{token}"
+    explicit_bucket = f"cfn-explicit-{token}"
+    explicit_queue = f"cfn-explicit-{token}"
+    explicit_topic = f"cfn-explicit-{token}"
+    explicit_param = f"/cfn-explicit/{token}"
+    explicit_template = {
+        "Resources": {
+            "NamedBucket": {
+                "Type": "AWS::S3::Bucket",
+                "Properties": {"BucketName": explicit_bucket},
+            },
+            "NamedQueue": {
+                "Type": "AWS::SQS::Queue",
+                "Properties": {"QueueName": explicit_queue},
+            },
+            "NamedTopic": {
+                "Type": "AWS::SNS::Topic",
+                "Properties": {"TopicName": explicit_topic},
+            },
+            "NamedParameter": {
+                "Type": "AWS::SSM::Parameter",
+                "Properties": {"Name": explicit_param, "Type": "String", "Value": "explicit"},
+            },
+        }
+    }
+
+    try:
+        create_stack(explicit_stack, explicit_template)
+        check("CFN Naming explicit CreateStack", True)
+    except Exception as e:
+        check("CFN Naming explicit CreateStack", False, e)
+        return
+
+    try:
+        ok, status = wait_for_stack_terminal_state(explicit_stack, expected_success=True)
+        check("CFN Naming explicit terminal status", ok, status)
+    except Exception as e:
+        check("CFN Naming explicit terminal status", False, e)
+        delete_stack(explicit_stack, "CFN Naming explicit DeleteStack")
+        return
+
+    try:
+        resources = describe_resources(explicit_stack)
+        actual_bucket = physical_id(resources, "NamedBucket")
+        actual_queue = physical_id(resources, "NamedQueue")
+        actual_topic = physical_id(resources, "NamedTopic")
+        actual_param = physical_id(resources, "NamedParameter")
+
+        check("CFN Naming explicit S3", actual_bucket == explicit_bucket)
+        check("CFN Naming explicit SQS", bool(actual_queue) and explicit_queue in actual_queue)
+        check("CFN Naming explicit SNS", bool(actual_topic) and explicit_topic in actual_topic)
+        check("CFN Naming explicit SSM", actual_param == explicit_param)
+    except Exception as e:
+        check("CFN Naming explicit names respected", False, e)
+
+    delete_stack(explicit_stack, "CFN Naming explicit DeleteStack")
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -1947,6 +2131,7 @@ ALL_GROUPS = [
     ("kms", run_kms),
     ("kinesis", run_kinesis),
     ("cloudwatch-metrics", run_cloudwatch_metrics),
+    ("cloudformation-naming", run_cloudformation_naming),
     ("cognito", run_cognito),
 ]
 
