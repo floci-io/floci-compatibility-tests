@@ -95,6 +95,10 @@ run_sqs() {
     url=$(echo "$out" | python -c "import sys,json; print(json.load(sys.stdin).get('QueueUrl',''))" 2>/dev/null || echo "")
     check "SQS CreateQueue" "$( [ -n "$url" ] && echo true || echo false )" "$out"
 
+    out=$(aws_cmd sqs get-queue-url --queue-name "$queue_name" 2>&1) && rc=0 || rc=1
+    got_url=$(echo "$out" | python -c "import sys,json; print(json.load(sys.stdin).get('QueueUrl',''))" 2>/dev/null || echo "")
+    check "SQS GetQueueUrl" "$( [ $rc -eq 0 ] && [ -n "$url" ] && [ -n "$got_url" ] && [ "$got_url" = "$url" ] && echo true || echo false )" "$out"
+
     out=$(aws_cmd sqs list-queues --queue-name-prefix "cli-sdk-test" 2>&1) && rc=0 || rc=1
     found=$(echo "$out" | python -c "import sys,json; d=json.load(sys.stdin); print('true' if any('$queue_name' in u for u in d.get('QueueUrls',[])) else 'false')" 2>/dev/null || echo false)
     check "SQS ListQueues" "$found" "$out"

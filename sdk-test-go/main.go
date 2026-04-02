@@ -147,7 +147,7 @@ func runSQS(cfg aws.Config) {
 	check("SQS ListQueues", err, err == nil && len(lr.QueueUrls) > 0)
 
 	ur, err := svc.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{QueueName: aws.String(qName)})
-	check("SQS GetQueueUrl", err, err == nil && strings.Contains(aws.ToString(ur.QueueUrl), qName))
+	check("SQS GetQueueUrl", err, err == nil && aws.ToString(ur.QueueUrl) == qURL)
 
 	ar, err := svc.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
 		QueueUrl:       aws.String(qURL),

@@ -37,6 +37,16 @@ public class SqsTests implements TestGroup {
                 ctx.check("SQS CreateQueue", false, e);
             }
 
+            // 1b. GetQueueUrl
+            try {
+                GetQueueUrlResponse getUrlResp = sqs.getQueueUrl(GetQueueUrlRequest.builder()
+                        .queueName("sdk-test-queue")
+                        .build());
+                ctx.check("SQS GetQueueUrl", queueUrl != null && queueUrl.equals(getUrlResp.queueUrl()));
+            } catch (Exception e) {
+                ctx.check("SQS GetQueueUrl", false, e);
+            }
+
             // 2. List queues
             try {
                 ListQueuesResponse listResp = sqs.listQueues();
