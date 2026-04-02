@@ -80,6 +80,22 @@ CF_STATUS=$(aws --endpoint-url "$ENDPOINT" cloudformation describe-stacks \
     python3 -c "import sys,json; d=json.load(sys.stdin); print(d['Stacks'][0]['StackStatus'])" 2>/dev/null || echo "NONE")
 [ "$CF_STATUS" = "CREATE_COMPLETE" ] && check "CloudFormation stack CREATE_COMPLETE" 0 || check "CloudFormation stack CREATE_COMPLETE" 1
 
+# Secrets Manager generated secret exists and generated value matches constraints
+SECRET_NAME="floci-cdk-generated-secret"
+SECRET_DESC=$(aws --endpoint-url "$ENDPOINT" secretsmanager describe-secret --secret-id "$SECRET_NAME" 2>/dev/null || echo '{}')
+SECRET_FOUND=$(echo "$SECRET_DESC" | python3 -c "import sys,json; d=json.load(sys.stdin); print(1 if d.get('Name') == 'floci-cdk-generated-secret' else 0)" 2>/dev/null || echo "0")
+[ "$SECRET_FOUND" -eq 1 ] && check "Secrets Manager generated secret exists" 0 || check "Secrets Manager generated secret exists" 1
+
+SECRET_STRING=$(aws --endpoint-url "$ENDPOINT" secretsmanager get-secret-value --secret-id "$SECRET_NAME" --query SecretString --output text 2>/dev/null || echo "")
+SECRET_USERNAME=$(echo "$SECRET_STRING" | python3 -c "import sys,json; d=json.loads(sys.stdin.read() or '{}'); print(d.get('username',''))" 2>/dev/null || echo "")
+[ "$SECRET_USERNAME" = "admin" ] && check "GeneratedSecret username is admin" 0 || check "GeneratedSecret username is admin" 1
+
+SECRET_PASSWORD_LEN=$(echo "$SECRET_STRING" | python3 -c "import sys,json; d=json.loads(sys.stdin.read() or '{}'); p=d.get('password',''); print(len(p) if isinstance(p,str) else 0)" 2>/dev/null || echo "0")
+[ "$SECRET_PASSWORD_LEN" -eq 24 ] && check "GeneratedSecret password length is 24" 0 || check "GeneratedSecret password length is 24" 1
+
+SECRET_EXCLUDE_OK=$(echo "$SECRET_STRING" | python3 -c "import sys,json,re; d=json.loads(sys.stdin.read() or '{}'); p=d.get('password',''); print(1 if isinstance(p,str) and re.search(r'[abc]', p) is None else 0)" 2>/dev/null || echo "0")
+[ "$SECRET_EXCLUDE_OK" -eq 1 ] && check "GeneratedSecret password excludes abc" 0 || check "GeneratedSecret password excludes abc" 1
+
 echo ""
 echo "--- Destroy ---"
 cdklocal destroy --force 2>&1 | grep -E "FlociTestStack|destroyed|error|Error" | tail -5 || true

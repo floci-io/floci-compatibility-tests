@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
 
 export class FlociTestStack extends cdk.Stack {
@@ -46,9 +47,21 @@ export class FlociTestStack extends cdk.Stack {
       ],
     });
 
+    const generatedSecret = new secretsmanager.CfnSecret(this, 'GeneratedSecret', {
+      name: 'floci-cdk-generated-secret',
+      generateSecretString: {
+        secretStringTemplate: '{"username":"admin"}',
+        generateStringKey: 'password',
+        passwordLength: 24,
+        excludeCharacters: 'abc',
+      },
+    });
+    generatedSecret.applyRemovalPolicy(cdk.RemovalPolicy.DESTROY);
+
     new cdk.CfnOutput(this, 'BucketName', { value: bucket.bucketName });
     new cdk.CfnOutput(this, 'QueueUrl', { value: queue.queueUrl });
     new cdk.CfnOutput(this, 'TableName', { value: table.tableName });
     new cdk.CfnOutput(this, 'IndexTableName', { value: indexTable.tableName });
+    new cdk.CfnOutput(this, 'GeneratedSecretName', { value: generatedSecret.name || 'floci-cdk-generated-secret' });
   }
 }
