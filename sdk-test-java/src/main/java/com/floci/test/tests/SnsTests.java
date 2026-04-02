@@ -233,6 +233,126 @@ public class SnsTests implements TestGroup {
                 } catch (Exception ignored) {}
             }
 
+            // 12. SNS FIFO with explicit MessageDeduplicationId
+            try {
+                String fifoQueueName = "sns-fifo-explicit-" + System.currentTimeMillis() + ".fifo";
+                String fifoQueueUrl = sqs.createQueue(CreateQueueRequest.builder()
+                        .queueName(fifoQueueName)
+                        .attributes(Map.of(QueueAttributeName.FIFO_QUEUE, "true"))
+                        .build()).queueUrl();
+                String fifoQueueArn = sqs.getQueueAttributes(GetQueueAttributesRequest.builder()
+                        .queueUrl(fifoQueueUrl)
+                        .attributeNames(QueueAttributeName.QUEUE_ARN)
+                        .build())
+                        .attributes().get(QueueAttributeName.QUEUE_ARN);
+
+                String fifoTopicName = "sns-fifo-explicit-" + System.currentTimeMillis() + ".fifo";
+                String fifoTopicArn = sns.createTopic(CreateTopicRequest.builder()
+                        .name(fifoTopicName)
+                        .attributes(Map.of("FifoTopic", "true"))
+                        .build()).topicArn();
+
+                String fifoSubArn = sns.subscribe(SubscribeRequest.builder()
+                        .topicArn(fifoTopicArn)
+                        .protocol("sqs")
+                        .endpoint(fifoQueueArn)
+                        .build()).subscriptionArn();
+
+                String explicitDedupId = "dedup-" + System.currentTimeMillis();
+                sns.publish(PublishRequest.builder()
+                        .topicArn(fifoTopicArn)
+                        .message("fifo message with explicit dedup")
+                        .messageGroupId("test-group")
+                        .messageDeduplicationId(explicitDedupId)
+                        .build());
+
+                Thread.sleep(500);
+                ReceiveMessageResponse fifoRecv = sqs.receiveMessage(ReceiveMessageRequest.builder()
+                        .queueUrl(fifoQueueUrl)
+                        .maxNumberOfMessages(1)
+                        .waitTimeSeconds(2)
+                        .messageSystemAttributeNames(MessageSystemAttributeName.MESSAGE_DEDUPLICATION_ID)
+                        .build());
+
+                ctx.check("SNS FIFO explicit dedup - message received", !fifoRecv.messages().isEmpty());
+                if (!fifoRecv.messages().isEmpty()) {
+                    var msg = fifoRecv.messages().get(0);
+                    String receivedDedupId = msg.attributes().get(MessageSystemAttributeName.MESSAGE_DEDUPLICATION_ID);
+                    ctx.check("SNS FIFO explicit dedup - dedup ID matches", explicitDedupId.equals(receivedDedupId));
+                    sqs.deleteMessage(DeleteMessageRequest.builder()
+                            .queueUrl(fifoQueueUrl)
+                            .receiptHandle(msg.receiptHandle())
+                            .build());
+                }
+
+                sns.unsubscribe(UnsubscribeRequest.builder().subscriptionArn(fifoSubArn).build());
+                sns.deleteTopic(DeleteTopicRequest.builder().topicArn(fifoTopicArn).build());
+                sqs.deleteQueue(DeleteQueueRequest.builder().queueUrl(fifoQueueUrl).build());
+            } catch (Exception e) {
+                ctx.check("SNS FIFO explicit dedup", false, e);
+            }
+
+            // 13. SNS FIFO with topic-level ContentBasedDeduplication
+            try {
+                String cbdQueueName = "sns-fifo-cbd-" + System.currentTimeMillis() + ".fifo";
+                String cbdQueueUrl = sqs.createQueue(CreateQueueRequest.builder()
+                        .queueName(cbdQueueName)
+                        .attributes(Map.of(QueueAttributeName.FIFO_QUEUE, "true"))
+                        .build()).queueUrl();
+                String cbdQueueArn = sqs.getQueueAttributes(GetQueueAttributesRequest.builder()
+                        .queueUrl(cbdQueueUrl)
+                        .attributeNames(QueueAttributeName.QUEUE_ARN)
+                        .build())
+                        .attributes().get(QueueAttributeName.QUEUE_ARN);
+
+                String cbdTopicName = "sns-fifo-cbd-" + System.currentTimeMillis() + ".fifo";
+                String cbdTopicArn = sns.createTopic(CreateTopicRequest.builder()
+                        .name(cbdTopicName)
+                        .attributes(Map.of(
+                                "FifoTopic", "true",
+                                "ContentBasedDeduplication", "true"
+                        ))
+                        .build()).topicArn();
+
+                String cbdSubArn = sns.subscribe(SubscribeRequest.builder()
+                        .topicArn(cbdTopicArn)
+                        .protocol("sqs")
+                        .endpoint(cbdQueueArn)
+                        .build()).subscriptionArn();
+
+                sns.publish(PublishRequest.builder()
+                        .topicArn(cbdTopicArn)
+                        .message("fifo message with content-based dedup")
+                        .messageGroupId("test-group")
+                        // No explicit MessageDeduplicationId - should be generated from content hash
+                        .build());
+
+                Thread.sleep(500);
+                ReceiveMessageResponse cbdRecv = sqs.receiveMessage(ReceiveMessageRequest.builder()
+                        .queueUrl(cbdQueueUrl)
+                        .maxNumberOfMessages(1)
+                        .waitTimeSeconds(2)
+                        .messageSystemAttributeNames(MessageSystemAttributeName.MESSAGE_DEDUPLICATION_ID)
+                        .build());
+
+                ctx.check("SNS FIFO content-based dedup - message received", !cbdRecv.messages().isEmpty());
+                if (!cbdRecv.messages().isEmpty()) {
+                    var msg = cbdRecv.messages().get(0);
+                    String receivedDedupId = msg.attributes().get(MessageSystemAttributeName.MESSAGE_DEDUPLICATION_ID);
+                    ctx.check("SNS FIFO content-based dedup - dedup ID present", receivedDedupId != null && !receivedDedupId.isEmpty());
+                    sqs.deleteMessage(DeleteMessageRequest.builder()
+                            .queueUrl(cbdQueueUrl)
+                            .receiptHandle(msg.receiptHandle())
+                            .build());
+                }
+
+                sns.unsubscribe(UnsubscribeRequest.builder().subscriptionArn(cbdSubArn).build());
+                sns.deleteTopic(DeleteTopicRequest.builder().topicArn(cbdTopicArn).build());
+                sqs.deleteQueue(DeleteQueueRequest.builder().queueUrl(cbdQueueUrl).build());
+            } catch (Exception e) {
+                ctx.check("SNS FIFO content-based dedup", false, e);
+            }
+
         } catch (Exception e) {
             ctx.check("SNS Client", false, e);
         }
