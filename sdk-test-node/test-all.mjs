@@ -9,7 +9,7 @@
  */
 
 import { SSMClient, PutParameterCommand, GetParameterCommand, DeleteParameterCommand, GetParametersByPathCommand, DescribeParametersCommand } from "@aws-sdk/client-ssm";
-import { SQSClient, CreateQueueCommand, SendMessageCommand, ReceiveMessageCommand, DeleteMessageCommand, GetQueueAttributesCommand, DeleteQueueCommand, SendMessageBatchCommand, SetQueueAttributesCommand } from "@aws-sdk/client-sqs";
+import { SQSClient, CreateQueueCommand, GetQueueUrlCommand, SendMessageCommand, ReceiveMessageCommand, DeleteMessageCommand, GetQueueAttributesCommand, DeleteQueueCommand, SendMessageBatchCommand, SetQueueAttributesCommand } from "@aws-sdk/client-sqs";
 import { SNSClient, CreateTopicCommand, SubscribeCommand, PublishCommand, ListTopicsCommand, ListSubscriptionsByTopicCommand, UnsubscribeCommand, DeleteTopicCommand, GetSubscriptionAttributesCommand, SetSubscriptionAttributesCommand, PublishBatchCommand } from "@aws-sdk/client-sns";
 import { S3Client, CreateBucketCommand, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command, DeleteBucketCommand, HeadObjectCommand, HeadBucketCommand, ListBucketsCommand, CopyObjectCommand, GetBucketLocationCommand } from "@aws-sdk/client-s3";
 import { DynamoDBClient, CreateTableCommand, PutItemCommand, GetItemCommand, DeleteItemCommand, ScanCommand, QueryCommand, UpdateItemCommand, DeleteTableCommand, ListTablesCommand, DescribeTableCommand } from "@aws-sdk/client-dynamodb";
@@ -268,6 +268,11 @@ async function testSqs() {
     const r = await sqs.send(new CreateQueueCommand({ QueueName: "floci-node-test" }));
     queueUrl = r.QueueUrl;
     check("Queue URL returned", !!queueUrl);
+  });
+
+  await tryOk("GetQueueUrl", async () => {
+    const r = await sqs.send(new GetQueueUrlCommand({ QueueName: "floci-node-test" }));
+    check("GetQueueUrl matches CreateQueue", r.QueueUrl === queueUrl);
   });
 
   await tryOk("GetQueueAttributes", async () => {

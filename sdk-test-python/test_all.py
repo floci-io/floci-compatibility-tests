@@ -192,6 +192,12 @@ def run_sqs():
         return
 
     try:
+        r = sqs.get_queue_url(QueueName="py-sdk-test-queue")
+        check("SQS GetQueueUrl", r.get("QueueUrl") == queue_url)
+    except Exception as e:
+        check("SQS GetQueueUrl", False, e)
+
+    try:
         r = sqs.list_queues(QueueNamePrefix="py-sdk-test-queue")
         check("SQS ListQueues", any("py-sdk-test-queue" in u for u in r.get("QueueUrls", [])))
     except Exception as e:
