@@ -45,7 +45,8 @@ public class LambdaTests implements TestGroup {
                 ctx.check("Lambda CreateFunction",
                         functionName.equals(createResp.functionName())
                         && functionArn != null && functionArn.contains(functionName)
-                        && "Active".equals(createResp.stateAsString()));
+                        && "Active".equals(createResp.stateAsString())
+                        && "$LATEST".equals(createResp.version()));
             } catch (Exception e) {
                 ctx.check("Lambda CreateFunction", false, e);
                 return;
@@ -120,7 +121,32 @@ public class LambdaTests implements TestGroup {
                 ctx.check("Lambda UpdateFunctionCode", false, e);
             }
 
-            // 8. CreateFunction duplicate → ResourceConflictException
+            // 8. PublishVersion & ListVersionsByFunction
+            try {
+                PublishVersionResponse v1 = lambda.publishVersion(PublishVersionRequest.builder()
+                        .functionName(functionName)
+                        .description("v1")
+                        .build());
+                ctx.check("Lambda PublishVersion (1)", "1".equals(v1.version()) && "v1".equals(v1.description()));
+
+                PublishVersionResponse v2 = lambda.publishVersion(PublishVersionRequest.builder()
+                        .functionName(functionName)
+                        .description("v2")
+                        .build());
+                ctx.check("Lambda PublishVersion (2)", "2".equals(v2.version()) && "v2".equals(v2.description()));
+
+                ListVersionsByFunctionResponse listVersions = lambda.listVersionsByFunction(ListVersionsByFunctionRequest.builder()
+                        .functionName(functionName)
+                        .build());
+                boolean hasLatest = listVersions.versions().stream().anyMatch(v -> "$LATEST".equals(v.version()));
+                boolean hasV1 = listVersions.versions().stream().anyMatch(v -> "1".equals(v.version()));
+                boolean hasV2 = listVersions.versions().stream().anyMatch(v -> "2".equals(v.version()));
+                ctx.check("Lambda ListVersionsByFunction", hasLatest && hasV1 && hasV2 && listVersions.versions().size() >= 3);
+            } catch (Exception e) {
+                ctx.check("Lambda ListVersionsByFunction", false, e);
+            }
+
+            // 9. CreateFunction duplicate → ResourceConflictException
             try {
                 lambda.createFunction(CreateFunctionRequest.builder()
                         .functionName(functionName)
@@ -138,7 +164,7 @@ public class LambdaTests implements TestGroup {
                 ctx.check("Lambda CreateFunction duplicate → 409", false, e);
             }
 
-            // 9. GetFunction non-existent → ResourceNotFoundException
+            // 10. GetFunction non-existent → ResourceNotFoundException
             try {
                 lambda.getFunction(GetFunctionRequest.builder()
                         .functionName("does-not-exist").build());
@@ -149,7 +175,7 @@ public class LambdaTests implements TestGroup {
                 ctx.check("Lambda GetFunction non-existent → 404", false, e);
             }
 
-            // 10. DeleteFunction
+            // 11. DeleteFunction
             try {
                 lambda.deleteFunction(DeleteFunctionRequest.builder()
                         .functionName(functionName).build());
@@ -160,11 +186,20 @@ public class LambdaTests implements TestGroup {
                 } catch (ResourceNotFoundException e) {
                     ctx.check("Lambda DeleteFunction", true);
                 }
+
+                // Verify versions are also gone
+                try {
+                    lambda.listVersionsByFunction(ListVersionsByFunctionRequest.builder()
+                            .functionName(functionName).build());
+                    ctx.check("Lambda DeleteFunction (versions deleted)", false);
+                } catch (ResourceNotFoundException e) {
+                    ctx.check("Lambda DeleteFunction (versions deleted)", true);
+                }
             } catch (Exception e) {
                 ctx.check("Lambda DeleteFunction", false, e);
             }
 
-            // 11. Ruby runtime support
+            // 12. Ruby runtime support
             String rubyFn = "sdk-test-ruby-fn";
             try {
                 CreateFunctionResponse rubyResp = lambda.createFunction(CreateFunctionRequest.builder()
