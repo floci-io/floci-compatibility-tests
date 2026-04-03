@@ -353,6 +353,49 @@ public class SnsTests implements TestGroup {
                 ctx.check("SNS FIFO content-based dedup", false, e);
             }
 
+            // 14. Subscribe idempotency - same topic+protocol+endpoint returns same ARN
+            try {
+                String idempTopicName = "sns-idempotent-" + System.currentTimeMillis();
+                String idempTopicArn = sns.createTopic(CreateTopicRequest.builder()
+                        .name(idempTopicName)
+                        .build()).topicArn();
+
+                String idempQueueName = "sns-idempotent-queue-" + System.currentTimeMillis();
+                String idempQueueUrl = sqs.createQueue(CreateQueueRequest.builder()
+                        .queueName(idempQueueName)
+                        .build()).queueUrl();
+                String idempQueueArn = sqs.getQueueAttributes(GetQueueAttributesRequest.builder()
+                        .queueUrl(idempQueueUrl)
+                        .attributeNames(QueueAttributeName.QUEUE_ARN)
+                        .build())
+                        .attributes().get(QueueAttributeName.QUEUE_ARN);
+
+                String firstSubArn = sns.subscribe(SubscribeRequest.builder()
+                        .topicArn(idempTopicArn)
+                        .protocol("sqs")
+                        .endpoint(idempQueueArn)
+                        .build()).subscriptionArn();
+
+                String secondSubArn = sns.subscribe(SubscribeRequest.builder()
+                        .topicArn(idempTopicArn)
+                        .protocol("sqs")
+                        .endpoint(idempQueueArn)
+                        .build()).subscriptionArn();
+
+                ctx.check("SNS Subscribe idempotent - same ARN", firstSubArn.equals(secondSubArn));
+
+                int subCount = sns.listSubscriptionsByTopic(ListSubscriptionsByTopicRequest.builder()
+                        .topicArn(idempTopicArn)
+                        .build()).subscriptions().size();
+                ctx.check("SNS Subscribe idempotent - single subscription", subCount == 1);
+
+                sns.unsubscribe(UnsubscribeRequest.builder().subscriptionArn(firstSubArn).build());
+                sns.deleteTopic(DeleteTopicRequest.builder().topicArn(idempTopicArn).build());
+                sqs.deleteQueue(DeleteQueueRequest.builder().queueUrl(idempQueueUrl).build());
+            } catch (Exception e) {
+                ctx.check("SNS Subscribe idempotent", false, e);
+            }
+
         } catch (Exception e) {
             ctx.check("SNS Client", false, e);
         }
