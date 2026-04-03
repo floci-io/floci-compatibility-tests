@@ -131,3 +131,44 @@ output "table_name" {
 output "secret_arn" {
   value = aws_secretsmanager_secret.db_creds.arn
 }
+
+# -- Cognito User Pool ---------------------------------------------------------
+resource "aws_cognito_user_pool" "pool" {
+  name = "floci-compat-pool"
+
+  password_policy {
+    minimum_length    = 12
+    require_lowercase = true
+    require_numbers   = true
+    require_symbols   = true
+    require_uppercase = true
+  }
+
+  auto_verified_attributes = ["email"]
+  username_attributes      = ["email"]
+
+  admin_create_user_config {
+    allow_admin_create_user_only = false
+  }
+
+  verification_message_template {
+    default_email_option = "CONFIRM_WITH_CODE"
+    email_message        = "Your code is {####}"
+    email_subject        = "Verify your account"
+  }
+
+  account_recovery_setting {
+    recovery_mechanism {
+      name     = "verified_email"
+      priority = 1
+    }
+  }
+}
+
+output "user_pool_id" {
+  value = aws_cognito_user_pool.pool.id
+}
+
+output "user_pool_arn" {
+  value = aws_cognito_user_pool.pool.arn
+}
