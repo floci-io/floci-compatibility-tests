@@ -16,7 +16,8 @@ use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
 use aws_sdk_s3::config::Builder as S3Builder;
 use aws_sdk_s3::types::{
-    BucketLocationConstraint, CreateBucketConfiguration, Delete, ObjectIdentifier,
+    BucketLocationConstraint, CorsConfiguration, CorsRule, CreateBucketConfiguration, Delete,
+    ObjectIdentifier,
 };
 
 static PASSED: AtomicUsize = AtomicUsize::new(0);
@@ -231,8 +232,18 @@ async fn run_s3(endpoint: &str) {
                 Ok(_) => check("S3 CopyObject non-ASCII key", ok()),
                 Err(e) => check("S3 CopyObject non-ASCII key", err(e)),
             }
-            let _ = s3.delete_object().bucket(bucket).key(non_ascii_key).send().await;
-            let _ = s3.delete_object().bucket(bucket).key(non_ascii_dst).send().await;
+            let _ = s3
+                .delete_object()
+                .bucket(bucket)
+                .key(non_ascii_key)
+                .send()
+                .await;
+            let _ = s3
+                .delete_object()
+                .bucket(bucket)
+                .key(non_ascii_dst)
+                .send()
+                .await;
         }
         Err(e) => check("S3 CopyObject non-ASCII key", err(e)),
     }
@@ -314,6 +325,609 @@ async fn run_s3(endpoint: &str) {
     match s3.delete_bucket().bucket(bucket).send().await {
         Ok(_) => check("S3 DeleteBucket", ok()),
         Err(e) => check("S3 DeleteBucket", err(e)),
+    }
+}
+
+// ── S3 CORS Enforcement ───────────────────────────────────────────────────────
+
+async fn run_s3_cors(endpoint: &str) {
+    println!("--- S3 CORS Enforcement Tests ---");
+
+    let base = base_config(endpoint).await;
+    let s3 = aws_sdk_s3::Client::from_conf(
+        aws_sdk_s3::config::Builder::from(&base)
+            .force_path_style(true)
+            .build(),
+    );
+
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let bucket = format!("rust-cors-{}", millis);
+    let object_key = "cors-test.txt";
+    let object_url = format!("{}/{}/{}", endpoint, bucket, object_key);
+
+    // reqwest::Client for raw HTTP — bypasses the AWS SDK so CORS headers are
+    // tested exactly as a browser would receive them.
+    let http = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("reqwest client");
+
+    /// Sends a raw HTTP request and returns `(status_code, response_headers)`.
+    async fn raw_req(
+        http: &reqwest::Client,
+        method: &str,
+        url: &str,
+        hdrs: &[(&str, &str)],
+    ) -> Result<(u16, reqwest::header::HeaderMap), String> {
+        let m = match method {
+            "GET" => reqwest::Method::GET,
+            "PUT" => reqwest::Method::PUT,
+            "POST" => reqwest::Method::POST,
+            "DELETE" => reqwest::Method::DELETE,
+            "OPTIONS" => reqwest::Method::OPTIONS,
+            "HEAD" => reqwest::Method::HEAD,
+            other => return Err(format!("unsupported method: {}", other)),
+        };
+        let mut builder = http.request(m, url);
+        for (k, v) in hdrs {
+            builder = builder.header(*k, *v);
+        }
+        let resp = builder.send().await.map_err(|e| e.to_string())?;
+        let status = resp.status().as_u16();
+        let headers = resp.headers().clone();
+        Ok((status, headers))
+    }
+
+    /// Returns the value of a response header as `&str`, or `""` if absent / non-ASCII.
+    macro_rules! hdr {
+        ($map:expr, $name:expr) => {
+            $map.get($name).and_then(|v| v.to_str().ok()).unwrap_or("")
+        };
+    }
+
+    // ── Setup: create bucket + upload test object ─────────────────────────────
+    match s3.create_bucket().bucket(&bucket).send().await {
+        Ok(_) => check("S3 CORS: setup CreateBucket", ok()),
+        Err(e) => {
+            check("S3 CORS: setup CreateBucket", err(e));
+            return;
+        }
+    }
+    match s3
+        .put_object()
+        .bucket(&bucket)
+        .key(object_key)
+        .body(bytes::Bytes::from("hello cors").into())
+        .content_type("text/plain")
+        .send()
+        .await
+    {
+        Ok(_) => check("S3 CORS: setup PutObject", ok()),
+        Err(e) => {
+            check("S3 CORS: setup PutObject", err(e));
+            let _ = s3.delete_bucket().bucket(&bucket).send().await;
+            return;
+        }
+    }
+
+    // ── No CORS config: OPTIONS preflight → 403 ──────────────────────────────
+    match raw_req(
+        &http,
+        "OPTIONS",
+        &object_url,
+        &[
+            ("Origin", "http://localhost:3000"),
+            ("Access-Control-Request-Method", "GET"),
+        ],
+    )
+    .await
+    {
+        Ok((s, _)) => check(
+            "S3 CORS: no config preflight → 403",
+            if s == 403 {
+                ok()
+            } else {
+                Err(format!("expected 403, got {}", s))
+            },
+        ),
+        Err(e) => check("S3 CORS: no config preflight → 403", Err(e)),
+    }
+
+    // ── Wildcard-origin CORS config ───────────────────────────────────────────
+    let wildcard_cors = CorsConfiguration::builder()
+        .cors_rules(
+            CorsRule::builder()
+                .allowed_origins("*")
+                .allowed_methods("GET")
+                .allowed_methods("PUT")
+                .allowed_methods("POST")
+                .allowed_methods("DELETE")
+                .allowed_methods("HEAD")
+                .allowed_headers("*")
+                .expose_headers("ETag")
+                .max_age_seconds(3000)
+                .build()
+                .expect("valid CorsRule"),
+        )
+        .build()
+        .expect("valid CorsConfiguration");
+
+    match s3
+        .put_bucket_cors()
+        .bucket(&bucket)
+        .cors_configuration(wildcard_cors)
+        .send()
+        .await
+    {
+        Ok(_) => check("S3 CORS: PutBucketCors wildcard", ok()),
+        Err(e) => check("S3 CORS: PutBucketCors wildcard", err(e)),
+    }
+
+    // Wildcard preflight → 200 with correct CORS response headers
+    match raw_req(
+        &http,
+        "OPTIONS",
+        &object_url,
+        &[
+            ("Origin", "http://localhost:3000"),
+            ("Access-Control-Request-Method", "GET"),
+        ],
+    )
+    .await
+    {
+        Ok((s, h)) => {
+            check(
+                "S3 CORS: wildcard preflight → 200",
+                if s == 200 {
+                    ok()
+                } else {
+                    Err(format!("got {}", s))
+                },
+            );
+            check(
+                "S3 CORS: wildcard preflight Allow-Origin: *",
+                if hdr!(h, "access-control-allow-origin") == "*" {
+                    ok()
+                } else {
+                    Err(format!("got: {:?}", h.get("access-control-allow-origin")))
+                },
+            );
+            check(
+                "S3 CORS: wildcard preflight Max-Age: 3000",
+                if hdr!(h, "access-control-max-age") == "3000" {
+                    ok()
+                } else {
+                    Err(format!("got: {:?}", h.get("access-control-max-age")))
+                },
+            );
+            check(
+                "S3 CORS: wildcard preflight Allow-Methods contains GET",
+                if hdr!(h, "access-control-allow-methods")
+                    .to_uppercase()
+                    .contains("GET")
+                {
+                    ok()
+                } else {
+                    Err(format!("got: {:?}", h.get("access-control-allow-methods")))
+                },
+            );
+        }
+        Err(e) => {
+            let e: Result<(), String> = Err(e);
+            check("S3 CORS: wildcard preflight → 200", e.clone());
+            check("S3 CORS: wildcard preflight Allow-Origin: *", e.clone());
+            check("S3 CORS: wildcard preflight Max-Age: 3000", e.clone());
+            check("S3 CORS: wildcard preflight Allow-Methods contains GET", e);
+        }
+    }
+
+    // Actual GET with Origin → Access-Control-Allow-Origin: * + Vary: Origin
+    match raw_req(
+        &http,
+        "GET",
+        &object_url,
+        &[("Origin", "http://localhost:3000")],
+    )
+    .await
+    {
+        Ok((s, h)) => {
+            check(
+                "S3 CORS: GET with Origin → 200",
+                if s == 200 {
+                    ok()
+                } else {
+                    Err(format!("got {}", s))
+                },
+            );
+            check(
+                "S3 CORS: GET with Origin → Allow-Origin: *",
+                if hdr!(h, "access-control-allow-origin") == "*" {
+                    ok()
+                } else {
+                    Err(format!("got: {:?}", h.get("access-control-allow-origin")))
+                },
+            );
+            let vary_has_origin = hdr!(h, "vary")
+                .split(',')
+                .any(|t| t.trim().eq_ignore_ascii_case("origin"));
+            check(
+                "S3 CORS: GET with Origin → Vary: Origin",
+                if vary_has_origin {
+                    ok()
+                } else {
+                    Err("Vary header missing 'Origin'".into())
+                },
+            );
+            check(
+                "S3 CORS: GET with Origin → Expose-Headers contains ETag",
+                if hdr!(h, "access-control-expose-headers").contains("ETag") {
+                    ok()
+                } else {
+                    Err("ETag missing from Expose-Headers".into())
+                },
+            );
+        }
+        Err(e) => {
+            let e: Result<(), String> = Err(e);
+            check("S3 CORS: GET with Origin → 200", e.clone());
+            check("S3 CORS: GET with Origin → Allow-Origin: *", e.clone());
+            check("S3 CORS: GET with Origin → Vary: Origin", e.clone());
+            check("S3 CORS: GET with Origin → Expose-Headers contains ETag", e);
+        }
+    }
+
+    // Actual GET without Origin → no CORS headers
+    match raw_req(&http, "GET", &object_url, &[]).await {
+        Ok((_, h)) => check(
+            "S3 CORS: GET without Origin → no Allow-Origin",
+            if h.get("access-control-allow-origin").is_none() {
+                ok()
+            } else {
+                Err("unexpected Access-Control-Allow-Origin".into())
+            },
+        ),
+        Err(e) => check("S3 CORS: GET without Origin → no Allow-Origin", Err(e)),
+    }
+
+    // OPTIONS without Origin → no CORS headers
+    match raw_req(&http, "OPTIONS", &object_url, &[]).await {
+        Ok((_, h)) => check(
+            "S3 CORS: OPTIONS without Origin → no Allow-Origin",
+            if h.get("access-control-allow-origin").is_none() {
+                ok()
+            } else {
+                Err("unexpected Access-Control-Allow-Origin".into())
+            },
+        ),
+        Err(e) => check("S3 CORS: OPTIONS without Origin → no Allow-Origin", Err(e)),
+    }
+
+    // ── Specific-origin CORS config ───────────────────────────────────────────
+    let specific_cors = CorsConfiguration::builder()
+        .cors_rules(
+            CorsRule::builder()
+                .allowed_origins("https://example.com")
+                .allowed_methods("GET")
+                .allowed_methods("PUT")
+                .allowed_headers("Content-Type")
+                .allowed_headers("Authorization")
+                .expose_headers("ETag")
+                .expose_headers("x-amz-request-id")
+                .max_age_seconds(600)
+                .build()
+                .expect("valid CorsRule"),
+        )
+        .build()
+        .expect("valid CorsConfiguration");
+
+    match s3
+        .put_bucket_cors()
+        .bucket(&bucket)
+        .cors_configuration(specific_cors)
+        .send()
+        .await
+    {
+        Ok(_) => check("S3 CORS: PutBucketCors specific origin", ok()),
+        Err(e) => check("S3 CORS: PutBucketCors specific origin", err(e)),
+    }
+
+    // Specific origin preflight matching → 200, echoes exact origin
+    match raw_req(
+        &http,
+        "OPTIONS",
+        &object_url,
+        &[
+            ("Origin", "https://example.com"),
+            ("Access-Control-Request-Method", "GET"),
+            ("Access-Control-Request-Headers", "Content-Type"),
+        ],
+    )
+    .await
+    {
+        Ok((s, h)) => {
+            check(
+                "S3 CORS: specific origin preflight → 200",
+                if s == 200 {
+                    ok()
+                } else {
+                    Err(format!("got {}", s))
+                },
+            );
+            check(
+                "S3 CORS: specific origin preflight echoes origin",
+                if hdr!(h, "access-control-allow-origin") == "https://example.com" {
+                    ok()
+                } else {
+                    Err(format!("got: {:?}", h.get("access-control-allow-origin")))
+                },
+            );
+            check(
+                "S3 CORS: specific origin preflight Max-Age: 600",
+                if hdr!(h, "access-control-max-age") == "600" {
+                    ok()
+                } else {
+                    Err(format!("got: {:?}", h.get("access-control-max-age")))
+                },
+            );
+        }
+        Err(e) => {
+            let e: Result<(), String> = Err(e);
+            check("S3 CORS: specific origin preflight → 200", e.clone());
+            check(
+                "S3 CORS: specific origin preflight echoes origin",
+                e.clone(),
+            );
+            check("S3 CORS: specific origin preflight Max-Age: 600", e);
+        }
+    }
+
+    // Non-matching origin → 403
+    match raw_req(
+        &http,
+        "OPTIONS",
+        &object_url,
+        &[
+            ("Origin", "https://attacker.evil.com"),
+            ("Access-Control-Request-Method", "GET"),
+        ],
+    )
+    .await
+    {
+        Ok((s, _)) => check(
+            "S3 CORS: non-matching origin → 403",
+            if s == 403 {
+                ok()
+            } else {
+                Err(format!("expected 403, got {}", s))
+            },
+        ),
+        Err(e) => check("S3 CORS: non-matching origin → 403", Err(e)),
+    }
+
+    // Non-matching method → 403
+    match raw_req(
+        &http,
+        "OPTIONS",
+        &object_url,
+        &[
+            ("Origin", "https://example.com"),
+            ("Access-Control-Request-Method", "DELETE"),
+        ],
+    )
+    .await
+    {
+        Ok((s, _)) => check(
+            "S3 CORS: non-matching method → 403",
+            if s == 403 {
+                ok()
+            } else {
+                Err(format!("expected 403, got {}", s))
+            },
+        ),
+        Err(e) => check("S3 CORS: non-matching method → 403", Err(e)),
+    }
+
+    // GET with matching specific origin → echoes origin
+    match raw_req(
+        &http,
+        "GET",
+        &object_url,
+        &[("Origin", "https://example.com")],
+    )
+    .await
+    {
+        Ok((_, h)) => check(
+            "S3 CORS: GET matching specific origin → echoes origin",
+            if hdr!(h, "access-control-allow-origin") == "https://example.com" {
+                ok()
+            } else {
+                Err(format!("got: {:?}", h.get("access-control-allow-origin")))
+            },
+        ),
+        Err(e) => check(
+            "S3 CORS: GET matching specific origin → echoes origin",
+            Err(e),
+        ),
+    }
+
+    // GET with non-matching origin → no CORS headers
+    match raw_req(
+        &http,
+        "GET",
+        &object_url,
+        &[("Origin", "https://not-allowed.com")],
+    )
+    .await
+    {
+        Ok((_, h)) => check(
+            "S3 CORS: GET non-matching origin → no Allow-Origin",
+            if h.get("access-control-allow-origin").is_none() {
+                ok()
+            } else {
+                Err("unexpected Access-Control-Allow-Origin".into())
+            },
+        ),
+        Err(e) => check("S3 CORS: GET non-matching origin → no Allow-Origin", Err(e)),
+    }
+
+    // ── DeleteBucketCors → preflights return 403 again ───────────────────────
+    match s3.delete_bucket_cors().bucket(&bucket).send().await {
+        Ok(_) => check("S3 CORS: DeleteBucketCors", ok()),
+        Err(e) => check("S3 CORS: DeleteBucketCors", err(e)),
+    }
+    match raw_req(
+        &http,
+        "OPTIONS",
+        &object_url,
+        &[
+            ("Origin", "http://localhost:3000"),
+            ("Access-Control-Request-Method", "GET"),
+        ],
+    )
+    .await
+    {
+        Ok((s, _)) => check(
+            "S3 CORS: after delete preflight → 403",
+            if s == 403 {
+                ok()
+            } else {
+                Err(format!("expected 403, got {}", s))
+            },
+        ),
+        Err(e) => check("S3 CORS: after delete preflight → 403", Err(e)),
+    }
+
+    // ── Subdomain wildcard origin pattern ─────────────────────────────────────
+    let subdomain_cors = CorsConfiguration::builder()
+        .cors_rules(
+            CorsRule::builder()
+                .allowed_origins("http://*.example.com")
+                .allowed_methods("GET")
+                .allowed_headers("*")
+                .max_age_seconds(120)
+                .build()
+                .expect("valid CorsRule"),
+        )
+        .build()
+        .expect("valid CorsConfiguration");
+
+    match s3
+        .put_bucket_cors()
+        .bucket(&bucket)
+        .cors_configuration(subdomain_cors)
+        .send()
+        .await
+    {
+        Ok(_) => check("S3 CORS: PutBucketCors subdomain wildcard", ok()),
+        Err(e) => check("S3 CORS: PutBucketCors subdomain wildcard", err(e)),
+    }
+
+    // Subdomain wildcard matches http://app.example.com → 200, echoes origin
+    match raw_req(
+        &http,
+        "OPTIONS",
+        &object_url,
+        &[
+            ("Origin", "http://app.example.com"),
+            ("Access-Control-Request-Method", "GET"),
+        ],
+    )
+    .await
+    {
+        Ok((s, h)) => {
+            check(
+                "S3 CORS: subdomain wildcard matches http://app.example.com → 200",
+                if s == 200 {
+                    ok()
+                } else {
+                    Err(format!("got {}", s))
+                },
+            );
+            check(
+                "S3 CORS: subdomain wildcard echoes http://app.example.com",
+                if hdr!(h, "access-control-allow-origin") == "http://app.example.com" {
+                    ok()
+                } else {
+                    Err(format!("got: {:?}", h.get("access-control-allow-origin")))
+                },
+            );
+        }
+        Err(e) => {
+            let e: Result<(), String> = Err(e);
+            check(
+                "S3 CORS: subdomain wildcard matches http://app.example.com → 200",
+                e.clone(),
+            );
+            check(
+                "S3 CORS: subdomain wildcard echoes http://app.example.com",
+                e,
+            );
+        }
+    }
+
+    // Subdomain wildcard rejects https://app.example.com (scheme mismatch) → 403
+    match raw_req(
+        &http,
+        "OPTIONS",
+        &object_url,
+        &[
+            ("Origin", "https://app.example.com"),
+            ("Access-Control-Request-Method", "GET"),
+        ],
+    )
+    .await
+    {
+        Ok((s, _)) => check(
+            "S3 CORS: subdomain wildcard rejects https:// → 403",
+            if s == 403 {
+                ok()
+            } else {
+                Err(format!("expected 403, got {}", s))
+            },
+        ),
+        Err(e) => check("S3 CORS: subdomain wildcard rejects https:// → 403", Err(e)),
+    }
+
+    // Subdomain wildcard rejects http://app.other.com (domain mismatch) → 403
+    match raw_req(
+        &http,
+        "OPTIONS",
+        &object_url,
+        &[
+            ("Origin", "http://app.other.com"),
+            ("Access-Control-Request-Method", "GET"),
+        ],
+    )
+    .await
+    {
+        Ok((s, _)) => check(
+            "S3 CORS: subdomain wildcard rejects different domain → 403",
+            if s == 403 {
+                ok()
+            } else {
+                Err(format!("expected 403, got {}", s))
+            },
+        ),
+        Err(e) => check(
+            "S3 CORS: subdomain wildcard rejects different domain → 403",
+            Err(e),
+        ),
+    }
+
+    // ── Cleanup ────────────────────────────────────────────────────────────────
+    let _ = s3.delete_bucket_cors().bucket(&bucket).send().await;
+    let _ = s3
+        .delete_object()
+        .bucket(&bucket)
+        .key(object_key)
+        .send()
+        .await;
+    match s3.delete_bucket().bucket(&bucket).send().await {
+        Ok(_) => check("S3 CORS: cleanup DeleteBucket", ok()),
+        Err(e) => check("S3 CORS: cleanup DeleteBucket", err(e)),
     }
 }
 
@@ -852,6 +1466,7 @@ async fn main() {
         ("ssm", |ep| Box::pin(run_ssm(ep))),
         ("sqs", |ep| Box::pin(run_sqs(ep))),
         ("s3", |ep| Box::pin(run_s3(ep))),
+        ("s3-cors", |ep| Box::pin(run_s3_cors(ep))),
         ("sts", |ep| Box::pin(run_sts(ep))),
         ("kms", |ep| Box::pin(run_kms(ep))),
         ("secretsmanager", |ep| Box::pin(run_secrets_manager(ep))),
