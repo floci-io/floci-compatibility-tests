@@ -145,6 +145,50 @@ public class LambdaInvokeTests implements TestGroup {
                 lambda.deleteFunction(DeleteFunctionRequest.builder()
                         .functionName(rubyFn).build());
             } catch (Exception ignored) {}
+
+            // provided.al2023 custom runtime (bootstrap shell script)
+            String providedFn = "sdk-invoke-provided-fn";
+            try {
+                lambda.createFunction(CreateFunctionRequest.builder()
+                        .functionName(providedFn)
+                        .runtime(Runtime.PROVIDED_AL2023)
+                        .role(role)
+                        .handler("bootstrap")
+                        .timeout(30)
+                        .memorySize(256)
+                        .code(FunctionCode.builder()
+                                .zipFile(SdkBytes.fromByteArray(LambdaUtils.providedRuntimeZip()))
+                                .build())
+                        .build());
+                ctx.check("Lambda provided.al2023 Invoke: CreateFunction", true);
+            } catch (Exception e) {
+                ctx.check("Lambda provided.al2023 Invoke: CreateFunction", false, e);
+                return;
+            }
+
+            try {
+                System.out.println("  (provided.al2023 cold start — waiting for container...)");
+                InvokeResponse resp = lambda.invoke(InvokeRequest.builder()
+                        .functionName(providedFn)
+                        .invocationType(InvocationType.REQUEST_RESPONSE)
+                        .payload(SdkBytes.fromUtf8String("{}"))
+                        .build());
+
+                String payload = resp.payload().asUtf8String();
+                System.out.println("  provided.al2023 response payload: " + payload);
+
+                boolean ok = resp.statusCode() == 200
+                        && resp.functionError() == null
+                        && payload.contains("hello from provided runtime");
+                ctx.check("Lambda provided.al2023 Invoke: RequestResponse", ok);
+            } catch (Exception e) {
+                ctx.check("Lambda provided.al2023 Invoke: RequestResponse", false, e);
+            }
+
+            try {
+                lambda.deleteFunction(DeleteFunctionRequest.builder()
+                        .functionName(providedFn).build());
+            } catch (Exception ignored) {}
         }
     }
 }
