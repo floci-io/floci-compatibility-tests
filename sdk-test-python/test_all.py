@@ -2120,6 +2120,141 @@ def run_cloudformation_naming():
 
 
 # ---------------------------------------------------------------------------
+# S3 Notification Filter
+# ---------------------------------------------------------------------------
+
+def run_s3_notifications():
+    print("--- S3 Notification Filter Tests ---")
+    s3 = client("s3")
+    sqs = client("sqs")
+    sns = client("sns")
+
+    account_id = "000000000000"
+    prefix = "s3-notif-filter-"
+    queue_name = prefix + "queue"
+    topic_name = prefix + "topic"
+    bucket_name = prefix + "bucket"
+
+    queue_arn = f"arn:aws:sqs:us-east-1:{account_id}:{queue_name}"
+
+    # Create SQS queue
+    try:
+        sqs.create_queue(QueueName=queue_name)
+        check("S3 Notifications create SQS queue", True)
+    except Exception as e:
+        check("S3 Notifications create SQS queue", False, e)
+        return
+
+    # Create SNS topic
+    try:
+        r = sns.create_topic(Name=topic_name)
+        topic_arn = r["TopicArn"]
+        check("S3 Notifications create SNS topic", True)
+    except Exception as e:
+        check("S3 Notifications create SNS topic", False, e)
+        try:
+            sqs.delete_queue(QueueUrl=sqs.get_queue_url(QueueName=queue_name)["QueueUrl"])
+        except Exception:
+            pass
+        return
+
+    # Create S3 bucket
+    try:
+        s3.create_bucket(Bucket=bucket_name)
+        check("S3 Notifications create bucket", True)
+    except Exception as e:
+        check("S3 Notifications create bucket", False, e)
+        try:
+            sns.delete_topic(TopicArn=topic_arn)
+            sqs.delete_queue(QueueUrl=sqs.get_queue_url(QueueName=queue_name)["QueueUrl"])
+        except Exception:
+            pass
+        return
+
+    try:
+        # Put notification configuration with prefix/suffix filters
+        s3.put_bucket_notification_configuration(
+            Bucket=bucket_name,
+            NotificationConfiguration={
+                "QueueConfigurations": [
+                    {
+                        "Id": "sqs-filtered",
+                        "QueueArn": queue_arn,
+                        "Events": ["s3:ObjectCreated:*"],
+                        "Filter": {
+                            "Key": {
+                                "FilterRules": [
+                                    {"Name": "prefix", "Value": "incoming/"},
+                                    {"Name": "suffix", "Value": ".csv"},
+                                ]
+                            }
+                        },
+                    }
+                ],
+                "TopicConfigurations": [
+                    {
+                        "Id": "sns-filtered",
+                        "TopicArn": topic_arn,
+                        "Events": ["s3:ObjectRemoved:*"],
+                        "Filter": {
+                            "Key": {
+                                "FilterRules": [
+                                    {"Name": "prefix", "Value": ""},
+                                    {"Name": "suffix", "Value": ".txt"},
+                                ]
+                            }
+                        },
+                    }
+                ],
+            },
+        )
+        check("S3 Notifications put notification configuration", True)
+    except Exception as e:
+        check("S3 Notifications put notification configuration", False, e)
+        try:
+            s3.delete_bucket(Bucket=bucket_name)
+            sns.delete_topic(TopicArn=topic_arn)
+            sqs.delete_queue(QueueUrl=sqs.get_queue_url(QueueName=queue_name)["QueueUrl"])
+        except Exception:
+            pass
+        return
+
+    try:
+        r = s3.get_bucket_notification_configuration(Bucket=bucket_name)
+
+        queue_configs = r.get("QueueConfigurations", [])
+        sqs_entry = next((c for c in queue_configs if c.get("QueueArn") == queue_arn), None)
+        check("S3 Notifications SQS config present", sqs_entry is not None)
+        if sqs_entry is not None:
+            sqs_rules = sqs_entry.get("Filter", {}).get("Key", {}).get("FilterRules", [])
+            check("S3 Notifications SQS config has 2 filter rules", len(sqs_rules) == 2, sqs_rules)
+
+        topic_configs = r.get("TopicConfigurations", [])
+        sns_entry = next((c for c in topic_configs if c.get("TopicArn") == topic_arn), None)
+        check("S3 Notifications SNS config present", sns_entry is not None)
+        if sns_entry is not None:
+            sns_rules = sns_entry.get("Filter", {}).get("Key", {}).get("FilterRules", [])
+            check("S3 Notifications SNS config has 2 filter rules", len(sns_rules) == 2, sns_rules)
+
+    except Exception as e:
+        check("S3 Notifications get notification configuration", False, e)
+    finally:
+        try:
+            s3.delete_bucket(Bucket=bucket_name)
+        except Exception:
+            pass
+        try:
+            sns.delete_topic(TopicArn=topic_arn)
+        except Exception:
+            pass
+        try:
+            queue_url = sqs.get_queue_url(QueueName=queue_name)["QueueUrl"]
+            sqs.delete_queue(QueueUrl=queue_url)
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -2139,6 +2274,7 @@ ALL_GROUPS = [
     ("cloudwatch-metrics", run_cloudwatch_metrics),
     ("cloudformation-naming", run_cloudformation_naming),
     ("cognito", run_cognito),
+    ("s3-notifications", run_s3_notifications),
 ]
 
 

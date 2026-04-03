@@ -96,11 +96,26 @@ public class S3NotificationTests implements TestGroup {
                                     .id("sqs-created")
                                     .queueArn(createdQueueArn)
                                     .events(Event.S3_OBJECT_CREATED)
+                                    .filter(NotificationConfigurationFilter.builder()
+                                            .key(S3KeyFilter.builder()
+                                                    .filterRules(FilterRule.builder()
+                                                            .name(FilterRuleName.PREFIX).value("").build())
+                                                    .build())
+                                            .build())
                                     .build())
                             .topicConfigurations(TopicConfiguration.builder()
                                     .id("sns-removed")
                                     .topicArn(topicArn)
                                     .events(Event.S3_OBJECT_REMOVED)
+                                    .filter(NotificationConfigurationFilter.builder()
+                                            .key(S3KeyFilter.builder()
+                                                    .filterRules(
+                                                            FilterRule.builder()
+                                                                    .name(FilterRuleName.PREFIX).value("").build(),
+                                                            FilterRule.builder()
+                                                                    .name(FilterRuleName.SUFFIX).value(".txt").build())
+                                                    .build())
+                                            .build())
                                     .build())
                             .build())
                     .build());
@@ -119,11 +134,23 @@ public class S3NotificationTests implements TestGroup {
                     .anyMatch(q -> q.queueArn().equals(createdQueueArn));
             boolean hasTopic = nc.topicConfigurations().stream()
                     .anyMatch(t -> t.topicArn().equals(topicArn));
+            boolean queueFilterPreserved = nc.queueConfigurations().stream()
+                    .anyMatch(q -> q.queueArn().equals(createdQueueArn)
+                            && q.filter() != null && q.filter().key() != null
+                            && q.filter().key().filterRules().size() == 1);
+            boolean topicFilterPreserved = nc.topicConfigurations().stream()
+                    .anyMatch(t -> t.topicArn().equals(topicArn)
+                            && t.filter() != null && t.filter().key() != null
+                            && t.filter().key().filterRules().size() == 2);
             ctx.check("S3 GetBucketNotificationConfiguration (queue)", hasQueue);
             ctx.check("S3 GetBucketNotificationConfiguration (topic)", hasTopic);
+            ctx.check("S3 GetBucketNotificationConfiguration (queue filter round-trip)", queueFilterPreserved);
+            ctx.check("S3 GetBucketNotificationConfiguration (topic filter round-trip)", topicFilterPreserved);
         } catch (Exception e) {
             ctx.check("S3 GetBucketNotificationConfiguration (queue)", false, e);
             ctx.check("S3 GetBucketNotificationConfiguration (topic)", false, e);
+            ctx.check("S3 GetBucketNotificationConfiguration (queue filter round-trip)", false, e);
+            ctx.check("S3 GetBucketNotificationConfiguration (topic filter round-trip)", false, e);
         }
 
         // 7. PutObject → fires ObjectCreated:Put to createdQueue

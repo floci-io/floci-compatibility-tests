@@ -11,7 +11,7 @@
 import { SSMClient, PutParameterCommand, GetParameterCommand, DeleteParameterCommand, GetParametersByPathCommand, DescribeParametersCommand } from "@aws-sdk/client-ssm";
 import { SQSClient, CreateQueueCommand, GetQueueUrlCommand, SendMessageCommand, ReceiveMessageCommand, DeleteMessageCommand, GetQueueAttributesCommand, DeleteQueueCommand, SendMessageBatchCommand, SetQueueAttributesCommand } from "@aws-sdk/client-sqs";
 import { SNSClient, CreateTopicCommand, SubscribeCommand, PublishCommand, ListTopicsCommand, ListSubscriptionsByTopicCommand, UnsubscribeCommand, DeleteTopicCommand, GetSubscriptionAttributesCommand, SetSubscriptionAttributesCommand, PublishBatchCommand } from "@aws-sdk/client-sns";
-import { S3Client, CreateBucketCommand, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command, DeleteBucketCommand, HeadObjectCommand, HeadBucketCommand, ListBucketsCommand, CopyObjectCommand, GetBucketLocationCommand } from "@aws-sdk/client-s3";
+import { S3Client, CreateBucketCommand, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command, DeleteBucketCommand, HeadObjectCommand, HeadBucketCommand, ListBucketsCommand, CopyObjectCommand, GetBucketLocationCommand, PutBucketNotificationConfigurationCommand, GetBucketNotificationConfigurationCommand } from "@aws-sdk/client-s3";
 import { DynamoDBClient, CreateTableCommand, PutItemCommand, GetItemCommand, DeleteItemCommand, ScanCommand, QueryCommand, UpdateItemCommand, DeleteTableCommand, ListTablesCommand, DescribeTableCommand } from "@aws-sdk/client-dynamodb";
 import { LambdaClient, CreateFunctionCommand, GetFunctionCommand, ListFunctionsCommand, DeleteFunctionCommand, CreateAliasCommand, GetAliasCommand, ListAliasesCommand, UpdateAliasCommand, DeleteAliasCommand, PublishVersionCommand } from "@aws-sdk/client-lambda";
 import { IAMClient, CreateRoleCommand, GetRoleCommand, DeleteRoleCommand, ListRolesCommand, CreatePolicyCommand, DeletePolicyCommand, AttachRolePolicyCommand, DetachRolePolicyCommand } from "@aws-sdk/client-iam";
@@ -1726,6 +1726,100 @@ async function testCloudFormationNaming() {
   await deleteStack(explicitStack, "CFN Naming explicit DeleteStack");
 }
 
+// ─────────────────────────── S3 Notifications ───────────────────────────
+async function testS3Notifications() {
+  console.log("\n=== S3 Notifications ===");
+  const s3 = makeClient(S3Client, { forcePathStyle: true });
+  const sqs = makeClient(SQSClient);
+  const sns = makeClient(SNSClient);
+
+  const prefix = "s3-notif-filter-";
+  const bucketName = `${prefix}bucket`;
+  const queueName = `${prefix}queue`;
+  const topicName = `${prefix}topic`;
+
+  let queueUrl, queueArn, topicArn;
+
+  await tryOk("CreateQueue for S3 notifications", async () => {
+    const r = await sqs.send(new CreateQueueCommand({ QueueName: queueName }));
+    queueUrl = r.QueueUrl;
+    const attrs = await sqs.send(new GetQueueAttributesCommand({ QueueUrl: queueUrl, AttributeNames: ["QueueArn"] }));
+    queueArn = attrs.Attributes.QueueArn;
+    check("QueueArn present", !!queueArn);
+  });
+
+  await tryOk("CreateTopic for S3 notifications", async () => {
+    const r = await sns.send(new CreateTopicCommand({ Name: topicName }));
+    topicArn = r.TopicArn;
+    check("TopicArn present", !!topicArn);
+  });
+
+  await tryOk("CreateBucket for S3 notifications", async () => {
+    await s3.send(new CreateBucketCommand({ Bucket: bucketName }));
+  });
+
+  await tryOk("PutBucketNotificationConfiguration", async () => {
+    await s3.send(new PutBucketNotificationConfigurationCommand({
+      Bucket: bucketName,
+      NotificationConfiguration: {
+        QueueConfigurations: [
+          {
+            Id: "sqs-filtered",
+            QueueArn: queueArn,
+            Events: ["s3:ObjectCreated:*"],
+            Filter: {
+              Key: {
+                FilterRules: [
+                  { Name: "prefix", Value: "incoming/" },
+                  { Name: "suffix", Value: ".csv" },
+                ],
+              },
+            },
+          },
+        ],
+        TopicConfigurations: [
+          {
+            Id: "sns-filtered",
+            TopicArn: topicArn,
+            Events: ["s3:ObjectRemoved:*"],
+            Filter: {
+              Key: {
+                FilterRules: [
+                  { Name: "prefix", Value: "" },
+                  { Name: "suffix", Value: ".txt" },
+                ],
+              },
+            },
+          },
+        ],
+      },
+    }));
+  });
+
+  await tryOk("GetBucketNotificationConfiguration", async () => {
+    const r = await s3.send(new GetBucketNotificationConfigurationCommand({ Bucket: bucketName }));
+
+    const queueConfigs = r.QueueConfigurations || [];
+    const sqsEntry = queueConfigs.find(c => c.QueueArn === queueArn);
+    check("QueueConfiguration entry found", !!sqsEntry);
+    check("QueueConfiguration has 2 filter rules", (sqsEntry?.Filter?.Key?.FilterRules || []).length === 2);
+
+    const topicConfigs = r.TopicConfigurations || [];
+    const snsEntry = topicConfigs.find(c => c.TopicArn === topicArn);
+    check("TopicConfiguration entry found", !!snsEntry);
+    check("TopicConfiguration has 2 filter rules", (snsEntry?.Filter?.Key?.FilterRules || []).length === 2);
+  });
+
+  await tryOk("DeleteBucket S3 notifications", () =>
+    s3.send(new DeleteBucketCommand({ Bucket: bucketName })));
+
+  await tryOk("DeleteQueue S3 notifications", () =>
+    sqs.send(new DeleteQueueCommand({ QueueUrl: queueUrl })));
+
+  await tryOk("DeleteTopic S3 notifications", () =>
+    sns.send(new DeleteTopicCommand({ TopicArn: topicArn })));
+}
+
 // ─────────────────────────── Runner ───────────────────────────
 const ALL_SUITES = {
   ssm: testSsm,
@@ -1744,6 +1838,7 @@ const ALL_SUITES = {
   "cloudformation-naming": testCloudFormationNaming,
   cognito: testCognito,
   "cognito-oauth": testCognitoOAuth,
+  "s3-notifications": testS3Notifications,
 };
 
 async function main() {

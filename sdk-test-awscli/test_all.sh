@@ -875,10 +875,104 @@ print('true' if 'test-group' in groups else 'false')
 }
 
 # ---------------------------------------------------------------------------
+# S3 Notification Filter Tests
+# ---------------------------------------------------------------------------
+
+run_s3_notifications() {
+    echo "--- S3 Notification Filter Tests ---"
+
+    local bucket="s3-notif-filter-bucket"
+    local queue="s3-notif-filter-queue"
+    local topic="s3-notif-filter-topic"
+    local account_id="000000000000"
+    local queue_arn="arn:aws:sqs:us-east-1:${account_id}:${queue}"
+
+    # Setup
+    aws_cmd sqs create-queue --queue-name "$queue" > /dev/null 2>&1
+    local topic_out
+    topic_out=$(aws_cmd sns create-topic --name "$topic" 2>&1) && rc=0 || rc=1
+    local topic_arn
+    topic_arn=$(echo "$topic_out" | python3 -c "import sys,json; print(json.load(sys.stdin)['TopicArn'])" 2>/dev/null || echo "")
+    if [ -z "$topic_arn" ]; then
+        check "S3 Notifications setup: CreateTopic" "false" "$topic_out"
+        return
+    fi
+    aws_cmd s3api create-bucket --bucket "$bucket" > /dev/null 2>&1
+
+    # PutBucketNotificationConfiguration with filters
+    local notif_config
+    notif_config=$(cat <<NOTIF_EOF
+{
+  "QueueConfigurations": [{
+    "Id": "sqs-filtered",
+    "QueueArn": "${queue_arn}",
+    "Events": ["s3:ObjectCreated:*"],
+    "Filter": {
+      "Key": {
+        "FilterRules": [
+          {"Name": "prefix", "Value": "incoming/"},
+          {"Name": "suffix", "Value": ".csv"}
+        ]
+      }
+    }
+  }],
+  "TopicConfigurations": [{
+    "Id": "sns-filtered",
+    "TopicArn": "${topic_arn}",
+    "Events": ["s3:ObjectRemoved:*"],
+    "Filter": {
+      "Key": {
+        "FilterRules": [
+          {"Name": "prefix", "Value": ""},
+          {"Name": "suffix", "Value": ".txt"}
+        ]
+      }
+    }
+  }]
+}
+NOTIF_EOF
+)
+
+    local out
+    out=$(aws_cmd s3api put-bucket-notification-configuration \
+        --bucket "$bucket" \
+        --notification-configuration "$notif_config" 2>&1) && rc=0 || rc=1
+    check "S3 PutBucketNotificationConfiguration with Filter" "$( [ $rc -eq 0 ] && echo true || echo false )" "$out"
+
+    # GetBucketNotificationConfiguration — verify filter round-trip
+    out=$(aws_cmd s3api get-bucket-notification-configuration --bucket "$bucket" 2>&1) && rc=0 || rc=1
+    if [ $rc -eq 0 ]; then
+        local queue_filter_count topic_filter_count
+        queue_filter_count=$(echo "$out" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+qc = [q for q in d.get('QueueConfigurations', []) if q.get('QueueArn') == '${queue_arn}']
+print(len(qc[0]['Filter']['Key']['FilterRules']) if qc and 'Filter' in qc[0] else 0)
+" 2>/dev/null || echo "0")
+        topic_filter_count=$(echo "$out" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+tc = [t for t in d.get('TopicConfigurations', []) if t.get('TopicArn') == '${topic_arn}']
+print(len(tc[0]['Filter']['Key']['FilterRules']) if tc and 'Filter' in tc[0] else 0)
+" 2>/dev/null || echo "0")
+        check "S3 GetBucketNotificationConfiguration (queue filter round-trip)" "$( [ "$queue_filter_count" = "2" ] && echo true || echo false )" "expected 2 rules, got $queue_filter_count"
+        check "S3 GetBucketNotificationConfiguration (topic filter round-trip)" "$( [ "$topic_filter_count" = "2" ] && echo true || echo false )" "expected 2 rules, got $topic_filter_count"
+    else
+        check "S3 GetBucketNotificationConfiguration (queue filter round-trip)" "false" "$out"
+        check "S3 GetBucketNotificationConfiguration (topic filter round-trip)" "false" "$out"
+    fi
+
+    # Cleanup
+    aws_cmd s3api delete-bucket --bucket "$bucket" > /dev/null 2>&1
+    aws_cmd sqs delete-queue --queue-url "${ENDPOINT}/${account_id}/${queue}" > /dev/null 2>&1
+    aws_cmd sns delete-topic --topic-arn "$topic_arn" > /dev/null 2>&1
+}
+
+# ---------------------------------------------------------------------------
 # Group registry and entry point
 # ---------------------------------------------------------------------------
 
-ALL_GROUPS=(ssm sqs sns s3 dynamodb dynamodb-gsi dynamodb-scan-filter iam sts secretsmanager kms cognito)
+ALL_GROUPS=(ssm sqs sns s3 dynamodb dynamodb-gsi dynamodb-scan-filter iam sts secretsmanager kms cognito s3-notifications)
 
 resolve_enabled() {
     local names=()

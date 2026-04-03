@@ -660,6 +660,157 @@ async fn run_secrets_manager(endpoint: &str) {
 
 // ── entry point ───────────────────────────────────────────────────────────────
 
+// ── S3 Notifications ─────────────────────────────────────────────────────────
+
+async fn run_s3_notifications(endpoint: &str) {
+    println!("--- S3 Notification Filter Tests ---");
+
+    let base = base_config(endpoint).await;
+    let s3 = aws_sdk_s3::Client::from_conf(
+        S3Builder::from(&base).force_path_style(true).build(),
+    );
+    let sqs = aws_sdk_sqs::Client::new(&base);
+    let sns = aws_sdk_sns::Client::new(&base);
+
+    let bucket = "s3-notif-filter-bucket";
+    let queue_name = "s3-notif-filter-queue";
+    let topic_name = "s3-notif-filter-topic";
+    let account_id = "000000000000";
+    let queue_arn = format!("arn:aws:sqs:us-east-1:{}:{}", account_id, queue_name);
+
+    // Setup
+    let _ = sqs.create_queue().queue_name(queue_name).send().await;
+    let topic_arn = match sns.create_topic().name(topic_name).send().await {
+        Ok(r) => r.topic_arn.unwrap_or_default(),
+        Err(e) => {
+            check("S3 Notifications setup: CreateTopic", err(e));
+            return;
+        }
+    };
+    let _ = s3.create_bucket().bucket(bucket).send().await;
+
+    // PutBucketNotificationConfiguration with filters
+    use aws_sdk_s3::types::{
+        Event as S3Event, FilterRule as S3FilterRule, FilterRuleName,
+        NotificationConfigurationFilter, QueueConfiguration as S3QueueConfig,
+        S3KeyFilter, TopicConfiguration as S3TopicConfig,
+    };
+
+    let queue_config = S3QueueConfig::builder()
+        .id("sqs-filtered")
+        .queue_arn(&queue_arn)
+        .events(S3Event::S3ObjectCreated)
+        .filter(
+            NotificationConfigurationFilter::builder()
+                .key(
+                    S3KeyFilter::builder()
+                        .filter_rules(
+                            S3FilterRule::builder()
+                                .name(FilterRuleName::Prefix)
+                                .value("incoming/")
+                                .build(),
+                        )
+                        .filter_rules(
+                            S3FilterRule::builder()
+                                .name(FilterRuleName::Suffix)
+                                .value(".csv")
+                                .build(),
+                        )
+                        .build(),
+                )
+                .build(),
+        )
+        .build()
+        .expect("queue config");
+
+    let topic_config = S3TopicConfig::builder()
+        .id("sns-filtered")
+        .topic_arn(&topic_arn)
+        .events(S3Event::S3ObjectRemoved)
+        .filter(
+            NotificationConfigurationFilter::builder()
+                .key(
+                    S3KeyFilter::builder()
+                        .filter_rules(
+                            S3FilterRule::builder()
+                                .name(FilterRuleName::Prefix)
+                                .value("")
+                                .build(),
+                        )
+                        .filter_rules(
+                            S3FilterRule::builder()
+                                .name(FilterRuleName::Suffix)
+                                .value(".txt")
+                                .build(),
+                        )
+                        .build(),
+                )
+                .build(),
+        )
+        .build()
+        .expect("topic config");
+
+    let put_result = s3
+        .put_bucket_notification_configuration()
+        .bucket(bucket)
+        .notification_configuration(
+            aws_sdk_s3::types::NotificationConfiguration::builder()
+                .queue_configurations(queue_config)
+                .topic_configurations(topic_config)
+                .build(),
+        )
+        .send()
+        .await;
+    check("S3 PutBucketNotificationConfiguration with Filter", put_result.map(|_| ()).map_err(|e| e.to_string()));
+
+    // GetBucketNotificationConfiguration — verify filter round-trip
+    match s3
+        .get_bucket_notification_configuration()
+        .bucket(bucket)
+        .send()
+        .await
+    {
+        Ok(nc) => {
+            let has_queue = nc.queue_configurations().iter().any(|q| {
+                q.queue_arn() == queue_arn
+            });
+            let queue_filter_ok = nc.queue_configurations().iter().any(|q| {
+                q.queue_arn() == queue_arn
+                    && q.filter()
+                        .and_then(|f| f.key())
+                        .map(|k| k.filter_rules().len() == 2)
+                        .unwrap_or(false)
+            });
+            let has_topic = nc.topic_configurations().iter().any(|t| {
+                t.topic_arn() == topic_arn
+            });
+            let topic_filter_ok = nc.topic_configurations().iter().any(|t| {
+                t.topic_arn() == topic_arn
+                    && t.filter()
+                        .and_then(|f| f.key())
+                        .map(|k| k.filter_rules().len() == 2)
+                        .unwrap_or(false)
+            });
+            check("S3 GetBucketNotificationConfiguration (queue)", if has_queue { ok() } else { Err("queue not found".into()) });
+            check("S3 GetBucketNotificationConfiguration (queue filter round-trip)", if queue_filter_ok { ok() } else { Err("queue filter rules missing".into()) });
+            check("S3 GetBucketNotificationConfiguration (topic)", if has_topic { ok() } else { Err("topic not found".into()) });
+            check("S3 GetBucketNotificationConfiguration (topic filter round-trip)", if topic_filter_ok { ok() } else { Err("topic filter rules missing".into()) });
+        }
+        Err(e) => {
+            check("S3 GetBucketNotificationConfiguration (queue)", err(&e));
+            check("S3 GetBucketNotificationConfiguration (queue filter round-trip)", err(&e));
+            check("S3 GetBucketNotificationConfiguration (topic)", err(&e));
+            check("S3 GetBucketNotificationConfiguration (topic filter round-trip)", err(&e));
+        }
+    }
+
+    // Cleanup
+    let _ = s3.delete_bucket().bucket(bucket).send().await;
+    let queue_url = format!("{}/{}/{}", endpoint, account_id, queue_name);
+    let _ = sqs.delete_queue().queue_url(&queue_url).send().await;
+    let _ = sns.delete_topic().topic_arn(&topic_arn).send().await;
+}
+
 fn resolve_enabled(args: &[String]) -> Option<HashSet<String>> {
     let mut groups: HashSet<String> = args
         .iter()
@@ -704,6 +855,7 @@ async fn main() {
         ("sts", |ep| Box::pin(run_sts(ep))),
         ("kms", |ep| Box::pin(run_kms(ep))),
         ("secretsmanager", |ep| Box::pin(run_secrets_manager(ep))),
+        ("s3-notifications", |ep| Box::pin(run_s3_notifications(ep))),
     ];
 
     for (name, run) in &groups {

@@ -757,6 +757,128 @@ func resolveEnabled(args []string) map[string]bool {
 	return m
 }
 
+// ── S3 Notification Filter ────────────────────────────────────────────────────
+
+func runS3Notifications(cfg aws.Config) {
+	fmt.Println("--- S3 Notification Filter Tests ---")
+
+	s3Svc := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.UsePathStyle = true
+	})
+	sqsSvc := sqs.NewFromConfig(cfg)
+	snsSvc := sns.NewFromConfig(cfg)
+
+	queueName := "s3-notif-filter-queue"
+	topicName := "s3-notif-filter-topic"
+	bucketName := "s3-notif-filter-bucket"
+
+	// Create SQS queue
+	_, err := sqsSvc.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String(queueName)})
+	check("S3Notif CreateQueue", err)
+	if err != nil {
+		return
+	}
+	queueArn := "arn:aws:sqs:us-east-1:000000000000:" + queueName
+
+	// Create SNS topic
+	ct, err := snsSvc.CreateTopic(ctx, &sns.CreateTopicInput{Name: aws.String(topicName)})
+	check("S3Notif CreateTopic", err)
+	if err != nil {
+		return
+	}
+	topicArn := aws.ToString(ct.TopicArn)
+
+	// Create S3 bucket
+	_, err = s3Svc.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(bucketName)})
+	check("S3Notif CreateBucket", err)
+	if err != nil {
+		return
+	}
+
+	// PutBucketNotificationConfiguration
+	_, err = s3Svc.PutBucketNotificationConfiguration(ctx, &s3.PutBucketNotificationConfigurationInput{
+		Bucket: aws.String(bucketName),
+		NotificationConfiguration: &s3types.NotificationConfiguration{
+			QueueConfigurations: []s3types.QueueConfiguration{
+				{
+					Id:       aws.String("sqs-filtered"),
+					QueueArn: aws.String(queueArn),
+					Events:   []s3types.Event{s3types.EventS3ObjectCreated},
+					Filter: &s3types.NotificationConfigurationFilter{
+						Key: &s3types.S3KeyFilter{
+							FilterRules: []s3types.FilterRule{
+								{Name: s3types.FilterRuleNamePrefix, Value: aws.String("incoming/")},
+								{Name: s3types.FilterRuleNameSuffix, Value: aws.String(".csv")},
+							},
+						},
+					},
+				},
+			},
+			TopicConfigurations: []s3types.TopicConfiguration{
+				{
+					Id:       aws.String("sns-filtered"),
+					TopicArn: aws.String(topicArn),
+					Events:   []s3types.Event{s3types.EventS3ObjectRemoved},
+					Filter: &s3types.NotificationConfigurationFilter{
+						Key: &s3types.S3KeyFilter{
+							FilterRules: []s3types.FilterRule{
+								{Name: s3types.FilterRuleNamePrefix, Value: aws.String("")},
+								{Name: s3types.FilterRuleNameSuffix, Value: aws.String(".txt")},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	check("S3Notif PutBucketNotificationConfiguration", err)
+	if err != nil {
+		return
+	}
+
+	// GetBucketNotificationConfiguration and assert
+	gnc, err := s3Svc.GetBucketNotificationConfiguration(ctx, &s3.GetBucketNotificationConfigurationInput{
+		Bucket: aws.String(bucketName),
+	})
+	check("S3Notif GetBucketNotificationConfiguration", err)
+	if err != nil {
+		return
+	}
+
+	// Assert queue config
+	check("S3Notif QueueConfig present",
+		nil,
+		len(gnc.QueueConfigurations) > 0 && aws.ToString(gnc.QueueConfigurations[0].QueueArn) == queueArn,
+	)
+	check("S3Notif QueueConfig has 2 filter rules",
+		nil,
+		len(gnc.QueueConfigurations) > 0 &&
+			gnc.QueueConfigurations[0].Filter != nil &&
+			gnc.QueueConfigurations[0].Filter.Key != nil &&
+			len(gnc.QueueConfigurations[0].Filter.Key.FilterRules) == 2,
+	)
+
+	// Assert topic config
+	check("S3Notif TopicConfig present",
+		nil,
+		len(gnc.TopicConfigurations) > 0 && aws.ToString(gnc.TopicConfigurations[0].TopicArn) == topicArn,
+	)
+	check("S3Notif TopicConfig has 2 filter rules",
+		nil,
+		len(gnc.TopicConfigurations) > 0 &&
+			gnc.TopicConfigurations[0].Filter != nil &&
+			gnc.TopicConfigurations[0].Filter.Key != nil &&
+			len(gnc.TopicConfigurations[0].Filter.Key.FilterRules) == 2,
+	)
+
+	// Cleanup
+	s3Svc.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: aws.String(bucketName)})
+	sqsSvc.DeleteQueue(ctx, &sqs.DeleteQueueInput{
+		QueueUrl: aws.String("http://localhost:4566/000000000000/" + queueName),
+	})
+	snsSvc.DeleteTopic(ctx, &sns.DeleteTopicInput{TopicArn: aws.String(topicArn)})
+}
+
 func main() {
 	endpoint := os.Getenv("FLOCI_ENDPOINT")
 	if endpoint == "" {
@@ -784,6 +906,7 @@ func main() {
 		{"kms", runKMS},
 		{"kinesis", runKinesis},
 		{"cloudwatch", runCloudWatch},
+		{"s3-notifications", runS3Notifications},
 	}
 
 	enabled := resolveEnabled(os.Args[1:])
