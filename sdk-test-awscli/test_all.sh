@@ -802,17 +802,17 @@ run_ses() {
         --identity "$test_email" \
         --notification-type Bounce \
         --sns-topic arn:aws:sns:us-east-1:000000000000:bounce-topic 2>&1) && rc=0 || rc=1
-    check "SES SetIdentityNotificationTopic accepted parser bug" "$( [[ "$out" == *"'SetIdentityNotificationTopicResult'"* ]] || [ $rc -eq 0 ] && echo true || echo false )" "$out"
+    check "SES SetIdentityNotificationTopic" "$( [ $rc -eq 0 ] && echo true || echo false )" "$out"
 
     out=$(aws_cmd ses get-identity-notification-attributes --identities "$test_email" 2>&1) && rc=0 || rc=1
     found=$(echo "$out" | python -c "import sys,json; attrs=json.load(sys.stdin).get('NotificationAttributes',{}).get('$test_email',{}); print('true' if 'bounce-topic' in attrs.get('BounceTopic','') else 'false')" 2>/dev/null || echo false)
     check "SES GetIdentityNotificationAttributes" "$found" "$out"
 
     out=$(aws_cmd ses delete-identity --identity "$test_email" 2>&1) && rc=0 || rc=1
-    check "SES DeleteIdentity email accepted parser bug" "$( [[ "$out" == *"'DeleteIdentityResult'"* ]] || [ $rc -eq 0 ] && echo true || echo false )" "$out"
+    check "SES DeleteIdentity email" "$( [ $rc -eq 0 ] && echo true || echo false )" "$out"
 
     out=$(aws_cmd ses delete-identity --identity "$test_domain" 2>&1) && rc=0 || rc=1
-    check "SES DeleteIdentity domain accepted parser bug" "$( [[ "$out" == *"'DeleteIdentityResult'"* ]] || [ $rc -eq 0 ] && echo true || echo false )" "$out"
+    check "SES DeleteIdentity domain" "$( [ $rc -eq 0 ] && echo true || echo false )" "$out"
 
     out=$(aws_cmd ses list-identities 2>&1) && rc=0 || rc=1
     found=$(echo "$out" | python -c "import sys,json; ids=json.load(sys.stdin).get('Identities',[]); print('true' if '$test_email' not in ids and '$test_domain' not in ids else 'false')" 2>/dev/null || echo false)
