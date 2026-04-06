@@ -1,3 +1,10 @@
+
+## Moved to floci directly
+This test was merged with floci repo directly [floci/compatibility-tests](https://github.com/floci-io/floci/tree/main/compatibility-tests)
+
+
+This repo is archived. 
+
 # floci-compatibility-tests
 
 Compatibility test suite for [Floci](https://github.com/hectorvent/floci) — a local AWS emulator.
