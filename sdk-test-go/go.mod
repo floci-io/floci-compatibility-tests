@@ -18,6 +18,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.24
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.68.3
 	github.com/aws/aws-sdk-go-v2/service/sts v1.41.9
+	github.com/stretchr/testify v1.9.0
 )
 
 require (

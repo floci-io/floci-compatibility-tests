@@ -1,3 +1,6 @@
+# Environment
+.env
+
 # Node
 node_modules/
 npm-debug.log*
@@ -24,6 +27,15 @@ venv/
 *.egg-info/
 dist/
 .eggs/
+.pytest_cache/
+
+# Bash/Bats (shared bats dependencies)
+lib/bats-core/
+lib/bats-support/
+lib/bats-assert/
+
+# Test results
+test-results/
 
 # Rust
 sdk-test-rust/target/

@@ -1,0 +1,251 @@
+name: Compatibility Tests
+
+on:
+  pull_request:
+    paths:
+      - 'sdk-test-*/**'
+      - 'compat-*/**'
+      - 'lib/**'
+      - 'justfile'
+      - '.github/workflows/compatibility-tests.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'sdk-test-*/**'
+      - 'compat-*/**'
+      - 'lib/**'
+      - 'justfile'
+      - '.github/workflows/compatibility-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [python, typescript, awscli, java, go, rust, cdk, terraform, opentofu]
+        include:
+          # SDK test suites - TAP output
+          - suite: python
+            type: sdk
+            report_format: tap
+            report_path: ''
+          - suite: typescript
+            type: sdk
+            report_format: tap
+            report_path: ''
+          - suite: awscli
+            type: sdk
+            report_format: tap
+            report_path: ''
+          # SDK test suites - JUnit XML output
+          - suite: java
+            type: sdk
+            report_format: junit
+            report_path: sdk-test-java/target/surefire-reports/TEST-*.xml
+          - suite: go
+            type: sdk
+            report_format: junit
+            report_path: sdk-test-go/test-results.xml
+          - suite: rust
+            type: sdk
+            report_format: junit
+            report_path: sdk-test-rust/target/nextest/ci/test-results.xml
+          # IaC compat test suites - TAP output
+          - suite: cdk
+            type: compat
+            report_format: tap
+            report_path: ''
+          - suite: terraform
+            type: compat
+            report_format: tap
+            report_path: ''
+          - suite: opentofu
+            type: compat
+            report_format: tap
+            report_path: ''
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Start floci emulator
+      - name: Start floci
+        run: |
+          docker run -d --name floci -p 4566:4566 ghcr.io/hectorvent/floci:latest
+          echo "Waiting for floci to start..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:4566 > /dev/null 2>&1; then
+              echo "floci is ready!"
+              exit 0
+            fi
+            echo "Attempt $i: floci not ready yet..."
+            sleep 1
+          done
+          echo "floci failed to start"
+          exit 1
+
+      # Install Just (all suites)
+      - uses: extractions/setup-just@v2
+
+      # ============================================================
+      # SDK Test Suite Setup
+      # ============================================================
+
+      # Python setup
+      - name: Set up Python
+        if: matrix.suite == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'sdk-test-python/requirements.txt'
+
+      - name: Install Python dependencies
+        if: matrix.suite == 'python'
+        working-directory: sdk-test-python
+        run: pip install -r requirements.txt
+
+      # TypeScript setup
+      - name: Set up Node.js for TypeScript
+        if: matrix.suite == 'typescript'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'sdk-test-typescript/package-lock.json'
+
+      - name: Install TypeScript dependencies
+        if: matrix.suite == 'typescript'
+        working-directory: sdk-test-typescript
+        run: npm install
+
+      # Java setup
+      - name: Set up JDK
+        if: matrix.suite == 'java'
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Install Java dependencies
+        if: matrix.suite == 'java'
+        working-directory: sdk-test-java
+        run: mvn dependency:resolve -q
+
+      # Go setup
+      - name: Set up Go
+        if: matrix.suite == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: 'sdk-test-go/go.sum'
+
+      - name: Install Go dependencies
+        if: matrix.suite == 'go'
+        working-directory: sdk-test-go
+        run: |
+          go mod download
+          go install gotest.tools/gotestsum@latest
+
+      # Rust setup
+      - name: Set up Rust
+        if: matrix.suite == 'rust'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        if: matrix.suite == 'rust'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'sdk-test-rust'
+
+      - name: Install Rust dependencies
+        if: matrix.suite == 'rust'
+        working-directory: sdk-test-rust
+        run: |
+          cargo fetch
+          cargo install cargo-nextest --locked
+
+      # AWS CLI setup
+      - name: Setup AWS CLI test dependencies
+        if: matrix.suite == 'awscli'
+        run: just setup-awscli
+
+      - name: Verify AWS CLI prerequisites
+        if: matrix.suite == 'awscli'
+        run: |
+          aws --version
+          jq --version
+
+      # ============================================================
+      # IaC Compat Test Suite Setup
+      # ============================================================
+
+      # Bats setup (for awscli and all compat tests)
+      - name: Setup bats
+        if: matrix.suite == 'awscli' || matrix.type == 'compat'
+        run: just setup-bats
+
+      # CDK setup
+      - name: Set up Node.js for CDK
+        if: matrix.suite == 'cdk'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install CDK dependencies
+        if: matrix.suite == 'cdk'
+        working-directory: compat-cdk
+        run: |
+          npm install -g aws-cdk-local aws-cdk
+          npm install
+
+      # Terraform setup
+      - name: Set up Terraform
+        if: matrix.suite == 'terraform'
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.7'
+
+      # OpenTofu setup
+      - name: Set up OpenTofu
+        if: matrix.suite == 'opentofu'
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: '1.6'
+
+      # ============================================================
+      # Run Tests
+      # ============================================================
+
+      # Run TAP-output tests and capture output
+      - name: Run ${{ matrix.suite }} tests
+        id: tests
+        env:
+          FLOCI_ENDPOINT: http://localhost:4566
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          AWS_DEFAULT_REGION: us-east-1
+        run: |
+          if [ "${{ matrix.report_format }}" = "tap" ]; then
+            just test-${{ matrix.suite }} | tee test-results.tap
+          else
+            just test-${{ matrix.suite }}
+          fi
+
+      # Generate test summary (supports both TAP and JUnit XML)
+      - name: Generate test summary
+        if: always() && steps.tests.outcome != 'skipped'
+        uses: test-summary/action@v2
+        with:
+          paths: |
+            ${{ matrix.report_format == 'tap' && 'test-results.tap' || matrix.report_path }}
+
+      # Cleanup
+      - name: Stop floci
+        if: always()
+        run: docker stop floci || true
